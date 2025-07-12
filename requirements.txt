@@ -1,0 +1,8 @@
+
+# Wymagane biblioteki dla parsowania MusicXML i MIDI playback
+music21>=9.1.0
+pytest>=7.0.0
+lxml>=4.9.0
+psutil>=5.9.0
+memory-profiler>=0.60.0
+pytest-cov>=4.0.0 
