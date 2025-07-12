@@ -716,10 +716,10 @@ class TestDataIntegrity:
             for i in range(1, len(notes)):
                 assert notes[i].start_time >= notes[i-1].start_time
             
-            # Sprawdź konkretne wartości
+            # Sprawdź konkretne wartości (start_time względem początku utworu w quarter notes)
             assert notes[0].start_time == Fraction(0)
-            assert notes[1].start_time == Fraction(1, 4)
-            assert notes[2].start_time == Fraction(3, 4)
+            assert notes[1].start_time == Fraction(1)      # 1 quarter note after start
+            assert notes[2].start_time == Fraction(3)      # 3 quarter notes after start (1 + 2)
             
             os.unlink(f.name)
     

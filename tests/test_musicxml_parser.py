@@ -120,7 +120,7 @@ class TestMusicXMLParser:
         
         measure4 = part.measures[3]  # Should have volta 2
         assert 2 in measure4.ending_numbers
-        assert measure4.ending_type == EndingType.START
+        assert measure4.ending_type == EndingType.DISCONTINUE
     
     def test_pitch_parsing(self):
         """Test pitch parsing including accidentals"""

@@ -73,8 +73,12 @@ class RepeatExpander:
         current_structure = None
         i = 0
         
+        self.logger.debug(f"Analyzing {len(measures)} measures for repeat structures")
+        
         while i < len(measures):
             measure = measures[i]
+            measure_processed = False
+            self.logger.debug(f"Processing measure {i}: repeat_start={measure.repeat_start}, repeat_end={measure.repeat_end}, ending_type={measure.ending_type}")
             
             # Check for repeat start
             if measure.repeat_start:
@@ -133,41 +137,78 @@ class RepeatExpander:
                         if ending_num in current_structure['voltas']:
                             current_structure['voltas'][ending_num].append(i)
             
-            # Add measure to current structure
+            # Add measure to current structure FIRST (before processing repeat_end)
             if current_structure is not None:
                 current_structure['measures'].append(i)
-            else:
-                # Simple measure, create single-measure structure
-                structures.append({
-                    'type': 'simple',
-                    'start_measure': i,
-                    'measures': [i],
-                    'voltas': {},
-                    'repeat_count': 1
-                })
+                self.logger.debug(f"Added measure {i} to current structure")
+                measure_processed = True
             
-            # Check for repeat end or discontinue
+            # Check for repeat end or discontinue AFTER adding measure to structure
             if measure.repeat_end:
                 if current_structure is not None:
                     current_structure['repeat_count'] = measure.repeat_count
                     structures.append(current_structure)
                     current_structure = None
+                    # measure_processed is already True from above
+                else:
+                    # Implicit forward repeat - backward repeat without explicit forward repeat
+                    # Need to restructure: convert all previous simple structures into one repeat structure
+                    
+                    # Collect all measures from previous simple structures
+                    all_measures = []
+                    for struct in structures:
+                        if struct['type'] == 'simple':
+                            all_measures.extend(struct['measures'])
+                    
+                    # Add current measure (but don't duplicate if already added)
+                    if i not in all_measures:
+                        all_measures.append(i)
+                    
+                    # Clear structures and create one repeat structure
+                    structures.clear()
+                    implicit_structure = {
+                        'type': 'repeat',
+                        'start_measure': 0,  # Start from beginning
+                        'measures': sorted(list(set(all_measures))),  # All measures in order, no duplicates
+                        'voltas': {},
+                        'repeat_count': measure.repeat_count
+                    }
+                    structures.append(implicit_structure)
+                    self.logger.debug(f"Created implicit repeat structure with measures {implicit_structure['measures']}, repeat_count={measure.repeat_count}")
+                    measure_processed = True  # Measure was included in the implicit repeat
             elif measure.ending_type == EndingType.DISCONTINUE:
                 # DISCONTINUE ends the repeat structure
                 if current_structure is not None and current_structure['type'] == 'repeat':
                     structures.append(current_structure)
                     current_structure = None
             
+            # Create simple structure for measures not part of any repeat structure
+            if not measure_processed:
+                # Simple measure, create single-measure structure
+                simple_structure = {
+                    'type': 'simple',
+                    'start_measure': i,
+                    'measures': [i],
+                    'voltas': {},
+                    'repeat_count': 1
+                }
+                structures.append(simple_structure)
+                self.logger.debug(f"Created simple structure for measure {i}")
+            
             i += 1
         
         # Add any remaining structure
         if current_structure is not None:
             structures.append(current_structure)
+            self.logger.debug(f"Added remaining structure with measures {current_structure['measures']}")
         
+        self.logger.debug(f"Final structures: {[(s['type'], s['measures'], s['repeat_count']) for s in structures]}")
         return structures
     
     def _expand_repeat_structure(self, structure: Dict, start_time: Fraction, original_measures: List[MusicXMLMeasure]) -> List[MusicXMLMeasure]:
         """Expand a single repeat structure"""
+        self.logger.debug(f"Expanding structure: type={structure['type']}, measures={structure['measures']}, repeat_count={structure['repeat_count']}")
+        
         if structure['type'] == 'simple':
             # No repeats, just return measures with updated times
             if structure['measures']:
@@ -175,6 +216,7 @@ class RepeatExpander:
                 if measure_idx < len(original_measures):
                     measure = deepcopy(original_measures[measure_idx])
                     self._update_measure_times([measure], start_time)
+                    self.logger.debug(f"Expanded simple structure to 1 measure")
                     return [measure]
             return []
         
@@ -215,6 +257,7 @@ class RepeatExpander:
         # Update times
         self._update_measure_times(expanded_measures, current_time)
         
+        self.logger.debug(f"Expanded repeat structure to {len(expanded_measures)} measures")
         return expanded_measures
     
     def _get_volta_measures_for_repeat(self, voltas: Dict, repeat_num: int) -> List[int]:

@@ -330,12 +330,16 @@ class MusicXMLParserPass2:
         for direction_elem in measure_elem.findall('direction'):
             self._parse_direction(direction_elem, measure)
         
-        # Parse barlines - collect all endings from all barlines first
-        all_ending_types = []
+        # Parse barlines - prioritize right barline over left barline
+        left_ending_types = []
+        right_ending_types = []
         all_ending_numbers = []
         
         for barline_elem in measure_elem.findall('barline'):
             self._parse_barline(barline_elem, measure)
+            
+            # Determine barline location
+            location = barline_elem.get('location', 'right')  # default to right
             
             # Collect endings from this barline
             endings = barline_elem.findall('ending')
@@ -353,22 +357,29 @@ class MusicXMLParserPass2:
                 
                 if ending_type:
                     try:
-                        all_ending_types.append(EndingType(ending_type))
+                        ending_type_enum = EndingType(ending_type)
+                        if location == 'left':
+                            left_ending_types.append(ending_type_enum)
+                        else:  # right or middle
+                            right_ending_types.append(ending_type_enum)
                     except ValueError:
                         self.logger.log_warning(f"Invalid ending type: {ending_type}")
         
-        # Apply ending prioritization across all barlines in the measure
+        # Apply ending prioritization: right barline takes precedence over left
         if all_ending_numbers:
             measure.ending_numbers = list(set(all_ending_numbers))  # Remove duplicates
         
-        if all_ending_types:
-            # Prioritize ending types: DISCONTINUE > STOP > START
-            # DISCONTINUE is most important as it indicates the definitive end of a volta without repeat
-            if EndingType.DISCONTINUE in all_ending_types:
-                measure.ending_type = EndingType.DISCONTINUE
-            elif EndingType.STOP in all_ending_types:
+        # Choose ending type: right barline has priority over left barline
+        final_ending_types = right_ending_types if right_ending_types else left_ending_types
+        
+        if final_ending_types:
+            # Within the same barline, prioritize: STOP > DISCONTINUE > START
+            # STOP is most important as it indicates the definitive end of a volta
+            if EndingType.STOP in final_ending_types:
                 measure.ending_type = EndingType.STOP
-            elif EndingType.START in all_ending_types:
+            elif EndingType.DISCONTINUE in final_ending_types:
+                measure.ending_type = EndingType.DISCONTINUE
+            elif EndingType.START in final_ending_types:
                 measure.ending_type = EndingType.START
         
         # Parse notes
