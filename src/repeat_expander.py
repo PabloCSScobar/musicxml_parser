@@ -11,7 +11,10 @@ from typing import List, Dict, Optional, Tuple
 from fractions import Fraction
 from copy import deepcopy
 
-from musicxml_parser import MusicXMLScore, MusicXMLPart, MusicXMLMeasure, MusicXMLNote, EndingType
+try:
+    from .musicxml_parser import MusicXMLScore, MusicXMLPart, MusicXMLMeasure, MusicXMLNote, EndingType
+except ImportError:
+    from musicxml_parser import MusicXMLScore, MusicXMLPart, MusicXMLMeasure, MusicXMLNote, EndingType
 
 logger = logging.getLogger(__name__)
 
@@ -143,10 +146,15 @@ class RepeatExpander:
                     'repeat_count': 1
                 })
             
-            # Check for repeat end
+            # Check for repeat end or discontinue
             if measure.repeat_end:
                 if current_structure is not None:
                     current_structure['repeat_count'] = measure.repeat_count
+                    structures.append(current_structure)
+                    current_structure = None
+            elif measure.ending_type == EndingType.DISCONTINUE:
+                # DISCONTINUE ends the repeat structure
+                if current_structure is not None and current_structure['type'] == 'repeat':
                     structures.append(current_structure)
                     current_structure = None
             

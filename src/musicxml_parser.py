@@ -362,14 +362,14 @@ class MusicXMLParserPass2:
             measure.ending_numbers = list(set(all_ending_numbers))  # Remove duplicates
         
         if all_ending_types:
-            # Prioritize ending types: STOP > START > DISCONTINUE
-            # STOP is most important as it indicates the end of a volta
-            if EndingType.STOP in all_ending_types:
+            # Prioritize ending types: DISCONTINUE > STOP > START
+            # DISCONTINUE is most important as it indicates the definitive end of a volta without repeat
+            if EndingType.DISCONTINUE in all_ending_types:
+                measure.ending_type = EndingType.DISCONTINUE
+            elif EndingType.STOP in all_ending_types:
                 measure.ending_type = EndingType.STOP
             elif EndingType.START in all_ending_types:
                 measure.ending_type = EndingType.START
-            elif EndingType.DISCONTINUE in all_ending_types:
-                measure.ending_type = EndingType.DISCONTINUE
         
         # Parse notes
         for note_elem in measure_elem.findall('note'):

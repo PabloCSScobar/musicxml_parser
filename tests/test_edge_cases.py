@@ -208,8 +208,8 @@ class TestEdgeCases:
             score = parser.parse_file(f.name)
             
             # Sprawdź czy parser obsługuje złożone metrum
-            assert score.time_signature == "7/8"
-            assert score.parts[0].measures[1].time_signature == "15/16"
+            assert score.time_signature == (7, 8)
+            assert score.parts[0].measures[1].time_signature == (15, 16)
             
             os.unlink(f.name)
     
