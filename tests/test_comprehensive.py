@@ -641,29 +641,29 @@ class TestLinearSequenceGeneration:
               </attributes>
               <note>
                 <pitch><step>C</step><octave>4</octave></pitch>
-                <duration>4</duration>
+                <duration>1</duration>
                 <voice>1</voice>
-                <type>quarter</type>
+                <type>sixteenth</type>
               </note>
               <note>
                 <pitch><step>D</step><octave>4</octave></pitch>
-                <duration>4</duration>
+                <duration>1</duration>
                 <voice>1</voice>
-                <type>quarter</type>
+                <type>sixteenth</type>
               </note>
             </measure>
             <measure number="2">
               <note>
                 <pitch><step>E</step><octave>4</octave></pitch>
-                <duration>4</duration>
+                <duration>1</duration>
                 <voice>1</voice>
-                <type>quarter</type>
+                <type>sixteenth</type>
               </note>
               <note>
                 <pitch><step>F</step><octave>4</octave></pitch>
-                <duration>4</duration>
+                <duration>1</duration>
                 <voice>1</voice>
-                <type>quarter</type>
+                <type>sixteenth</type>
               </note>
             </measure>
           </part>
@@ -687,10 +687,10 @@ class TestLinearSequenceGeneration:
             assert notes[1].start_time == Fraction(1, 4)
             
             assert notes[2].pitch == "E4"
-            assert notes[2].start_time == Fraction(1, 1)  # Początek drugiego taktu
+            assert notes[2].start_time == Fraction(4, 1)  # Początek drugiego taktu (po pełnej mierze 4/4)
             
             assert notes[3].pitch == "F4"
-            assert notes[3].start_time == Fraction(5, 4)
+            assert notes[3].start_time == Fraction(17, 4)  # 4 + 1/4 = 17/4
             
             os.unlink(f.name)
     

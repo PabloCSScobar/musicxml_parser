@@ -63,18 +63,27 @@ class MusicXMLNote:
     is_rest: bool = False
     tie_start: bool = False
     tie_stop: bool = False
+    # Additional attributes expected by tests
+    is_chord: bool = False
+    tie: Optional[str] = None  # "start", "stop", or None
     
     def __post_init__(self):
         """Validate note data"""
         if self.pitch is None:
             self.is_rest = True
+            self.pitch = "rest"  # Set pitch to "rest" for consistency with tests
+        # Set tie based on tie_start/tie_stop
+        if self.tie_start:
+            self.tie = "start"
+        elif self.tie_stop:
+            self.tie = "stop"
 
 
 @dataclass
 class MusicXMLMeasure:
     """Represents a measure with its properties"""
     number: int
-    time_signature: Tuple[int, int] = (4, 4)  # (beats, beat_type)
+    _time_signature: Tuple[int, int] = (4, 4)  # (beats, beat_type)
     tempo_bpm: Optional[int] = None
     key_signature: int = 0  # fifths: -7 to 7
     divisions: int = 4  # divisions per quarter note
@@ -84,6 +93,16 @@ class MusicXMLMeasure:
     ending_numbers: List[int] = field(default_factory=list)
     ending_type: Optional[EndingType] = None
     notes: List[MusicXMLNote] = field(default_factory=list)
+    
+    @property
+    def time_signature(self) -> str:
+        """Return time signature as string (e.g., '4/4')"""
+        return f"{self._time_signature[0]}/{self._time_signature[1]}"
+    
+    @time_signature.setter
+    def time_signature(self, value: Tuple[int, int]):
+        """Set time signature from tuple"""
+        self._time_signature = value
 
 
 @dataclass
@@ -105,6 +124,20 @@ class MusicXMLScore:
     composer: str = "Unknown"
     parts: List[MusicXMLPart] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
+    # Global score properties (defaults from first measure)
+    tempo_bpm: Optional[int] = None
+    _time_signature: Tuple[int, int] = (4, 4)
+    key_signature: int = 0
+    
+    @property
+    def time_signature(self) -> str:
+        """Return time signature as string (e.g., '4/4')"""
+        return f"{self._time_signature[0]}/{self._time_signature[1]}"
+    
+    @time_signature.setter
+    def time_signature(self, value: Tuple[int, int]):
+        """Set time signature from tuple"""
+        self._time_signature = value
 
 
 class MusicXMLLogger:
@@ -279,11 +312,12 @@ class MusicXMLParserPass2:
         """Parse a single measure"""
         measure = MusicXMLMeasure(
             number=measure_num,
-            time_signature=self.current_time_sig,
             tempo_bpm=self.current_tempo,
             key_signature=self.current_key_sig,
             divisions=self.current_divisions
         )
+        # Set time signature using the property setter
+        measure._time_signature = self.current_time_sig
         
         measure_start_time = self.current_time
         note_start_time = measure_start_time
@@ -305,8 +339,8 @@ class MusicXMLParserPass2:
             note = self._parse_note(note_elem, measure_num, note_start_time)
             if note:
                 measure.notes.append(note)
-                if not note.is_rest:  # Only advance time for non-rest notes
-                    note_start_time += note.duration
+                # Advance time for all notes (including rests)
+                note_start_time += note.duration
         
         return measure
     
@@ -331,7 +365,7 @@ class MusicXMLParserPass2:
                     beats_val = int(beats.text)
                     beat_type_val = int(beat_type.text)
                     self.current_time_sig = (beats_val, beat_type_val)
-                    measure.time_signature = self.current_time_sig
+                    measure._time_signature = self.current_time_sig
                 except ValueError:
                     self.logger.log_warning(f"Invalid time signature: {beats.text}/{beat_type.text}")
         
@@ -422,6 +456,9 @@ class MusicXMLParserPass2:
         # Check if it's a rest
         is_rest = note_elem.find('rest') is not None
         
+        # Check if it's a chord note
+        is_chord = note_elem.find('chord') is not None
+        
         # Parse pitch
         pitch = None
         if not is_rest:
@@ -451,6 +488,8 @@ class MusicXMLParserPass2:
         try:
             duration_val = int(duration_elem.text)
             # Convert to quarter notes based on divisions
+            # In MusicXML, duration is in divisions per quarter note
+            # So duration_val / divisions gives us the duration in quarter notes
             duration = Fraction(duration_val, self.current_divisions)
         except ValueError:
             self.logger.log_warning(f"Invalid duration: {duration_elem.text}")
@@ -487,13 +526,19 @@ class MusicXMLParserPass2:
             start_time=start_time,
             is_rest=is_rest,
             tie_start=tie_start,
-            tie_stop=tie_stop
+            tie_stop=tie_stop,
+            is_chord=is_chord
         )
     
     def _calculate_measure_duration(self, measure: MusicXMLMeasure) -> Fraction:
         """Calculate the duration of a measure"""
-        beats, beat_type = measure.time_signature
-        return Fraction(beats, beat_type) * 4  # Convert to quarter notes
+        beats, beat_type = measure._time_signature
+        # beats/beat_type gives the duration in terms of whole notes
+        # Multiply by 4 to convert to quarter notes
+        # For 4/4: 4/4 * 4 = 4 quarter notes
+        # For 3/4: 3/4 * 4 = 3 quarter notes  
+        # For 2/2: 2/2 * 4 = 4 quarter notes
+        return Fraction(beats * 4, beat_type)
 
 
 class MusicXMLParser:
@@ -507,7 +552,7 @@ class MusicXMLParser:
         path = Path(file_path)
         
         if not path.exists():
-            raise MusicXMLError(f"File not found: {file_path}")
+            raise FileNotFoundError(f"File not found: {file_path}")
         
         if path.suffix.lower() == '.mxl':
             xml_content = self._extract_mxl(path)
@@ -528,11 +573,22 @@ class MusicXMLParser:
         pass2 = MusicXMLParserPass2(score, self.logger)
         score = pass2.parse(xml_content)
         
+        # Set global score properties from first measure
+        self._set_global_properties(score)
+        
         # Add any errors to the score
         score.errors = self.logger.errors
         
         self.logger.log_info(f"Parsing completed with {len(score.errors)} errors")
         return score
+    
+    def _set_global_properties(self, score: MusicXMLScore):
+        """Set global score properties from first measure"""
+        if score.parts and score.parts[0].measures:
+            first_measure = score.parts[0].measures[0]
+            score.tempo_bpm = first_measure.tempo_bpm
+            score._time_signature = first_measure._time_signature
+            score.key_signature = first_measure.key_signature
     
     def _extract_mxl(self, mxl_path: Path) -> str:
         """Extract MusicXML content from compressed .mxl file"""

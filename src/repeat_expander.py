@@ -36,8 +36,11 @@ class RepeatExpander:
         if not part.measures:
             return
         
+        # Store original measures for reference
+        original_measures = part.measures[:]
+        
         # Find repeat structures
-        repeat_structures = self._analyze_repeat_structures(part.measures)
+        repeat_structures = self._analyze_repeat_structures(original_measures)
         
         if not repeat_structures:
             # No repeats, just update start times
@@ -49,9 +52,15 @@ class RepeatExpander:
         current_time = Fraction(0)
         
         for structure in repeat_structures:
-            expanded_section = self._expand_repeat_structure(structure, current_time)
+            expanded_section = self._expand_repeat_structure(structure, current_time, original_measures)
             expanded_measures.extend(expanded_section)
-            current_time = expanded_section[-1].notes[-1].start_time + expanded_section[-1].notes[-1].duration if expanded_section[-1].notes else current_time
+            if expanded_section:
+                # Calculate current time based on last measure
+                last_measure = expanded_section[-1]
+                if last_measure.notes:
+                    current_time = last_measure.notes[-1].start_time + last_measure.notes[-1].duration
+                else:
+                    current_time += self._calculate_measure_duration(last_measure)
         
         part.measures = expanded_measures
     
@@ -130,13 +139,17 @@ class RepeatExpander:
         
         return structures
     
-    def _expand_repeat_structure(self, structure: Dict, start_time: Fraction) -> List[MusicXMLMeasure]:
+    def _expand_repeat_structure(self, structure: Dict, start_time: Fraction, original_measures: List[MusicXMLMeasure]) -> List[MusicXMLMeasure]:
         """Expand a single repeat structure"""
         if structure['type'] == 'simple':
             # No repeats, just return measures with updated times
-            measures = [self._get_measure_by_index(structure['measures'][0])]
-            self._update_measure_times(measures, start_time)
-            return measures
+            if structure['measures']:
+                measure_idx = structure['measures'][0]
+                if measure_idx < len(original_measures):
+                    measure = deepcopy(original_measures[measure_idx])
+                    self._update_measure_times([measure], start_time)
+                    return [measure]
+            return []
         
         # Handle repeat with voltas
         expanded_measures = []
@@ -155,20 +168,22 @@ class RepeatExpander:
             if volta_start is not None:
                 # Add measures before volta
                 for measure_idx in base_measures:
-                    if measure_idx < volta_start:
-                        measure = deepcopy(self._get_measure_by_index(measure_idx))
+                    if measure_idx < volta_start and measure_idx < len(original_measures):
+                        measure = deepcopy(original_measures[measure_idx])
                         expanded_measures.append(measure)
                 
                 # Add appropriate volta measures
                 volta_measures = self._get_volta_measures_for_repeat(voltas, repeat_num)
                 for measure_idx in volta_measures:
-                    measure = deepcopy(self._get_measure_by_index(measure_idx))
-                    expanded_measures.append(measure)
+                    if measure_idx < len(original_measures):
+                        measure = deepcopy(original_measures[measure_idx])
+                        expanded_measures.append(measure)
             else:
                 # No voltas, just add all measures
                 for measure_idx in base_measures:
-                    measure = deepcopy(self._get_measure_by_index(measure_idx))
-                    expanded_measures.append(measure)
+                    if measure_idx < len(original_measures):
+                        measure = deepcopy(original_measures[measure_idx])
+                        expanded_measures.append(measure)
         
         # Update times
         self._update_measure_times(expanded_measures, current_time)
@@ -192,46 +207,59 @@ class RepeatExpander:
         
         return []
     
-    def _get_measure_by_index(self, index: int) -> MusicXMLMeasure:
-        """Get measure by index (this is a placeholder - in real implementation, 
-        this would reference the original measures list)"""
-        # This is a simplified version - in real implementation,
-        # we'd need to maintain reference to the original measures
-        return MusicXMLMeasure(number=index + 1)
+
     
     def _update_measure_times(self, measures: List[MusicXMLMeasure], start_time: Fraction):
         """Update start times for all notes in measures"""
         current_time = start_time
         
         for measure in measures:
+            # Reset to measure start for each voice/staff
             measure_start = current_time
+            voice_times = {}
             
             for note in measure.notes:
-                note.start_time = current_time
-                current_time += note.duration
+                # Track time per voice to handle multiple voices
+                voice_key = (note.staff, note.voice)
+                if voice_key not in voice_times:
+                    voice_times[voice_key] = measure_start
+                
+                note.start_time = voice_times[voice_key]
+                voice_times[voice_key] += note.duration
             
-            # Update to next measure
-            if measure.notes:
-                current_time = measure_start + self._calculate_measure_duration(measure)
+            # Move to next measure - use the longest voice duration
+            if voice_times:
+                current_time = max(voice_times.values())
+            else:
+                current_time += self._calculate_measure_duration(measure)
     
     def _update_start_times(self, measures: List[MusicXMLMeasure]):
         """Update start times for measures without repeats"""
         current_time = Fraction(0)
         
         for measure in measures:
+            # Reset to measure start for each voice/staff
             measure_start = current_time
+            voice_times = {}
             
             for note in measure.notes:
-                note.start_time = current_time
-                current_time += note.duration
+                # Track time per voice to handle multiple voices
+                voice_key = (note.staff, note.voice)
+                if voice_key not in voice_times:
+                    voice_times[voice_key] = measure_start
+                
+                note.start_time = voice_times[voice_key]
+                voice_times[voice_key] += note.duration
             
-            # Update to next measure
-            if measure.notes:
-                current_time = measure_start + self._calculate_measure_duration(measure)
+            # Move to next measure - use the longest voice duration
+            if voice_times:
+                current_time = max(voice_times.values())
+            else:
+                current_time += self._calculate_measure_duration(measure)
     
     def _calculate_measure_duration(self, measure: MusicXMLMeasure) -> Fraction:
         """Calculate the duration of a measure"""
-        beats, beat_type = measure.time_signature
+        beats, beat_type = measure._time_signature
         return Fraction(beats, beat_type) * 4  # Convert to quarter notes
 
 
@@ -280,8 +308,16 @@ class LinearSequenceGenerator:
         events = []
         all_notes = self.generate_sequence(score)
         
+        # Add initial tempo if available
+        if score.tempo_bpm:
+            events.append({
+                'type': 'tempo_change',
+                'time': Fraction(0),
+                'tempo': score.tempo_bpm
+            })
+        
         # Add tempo changes
-        current_tempo = 120
+        current_tempo = score.tempo_bpm or 120
         for part in score.parts:
             for measure in part.measures:
                 if measure.tempo_bpm and measure.tempo_bpm != current_tempo:

@@ -73,7 +73,7 @@ def print_measure_details(measures, max_measures=5):
     
     for i, measure in enumerate(measures[:max_measures]):
         print(f"\n   Measure {measure.number}:")
-        print(f"      Time Signature: {measure.time_signature[0]}/{measure.time_signature[1]}")
+        print(f"      Time Signature: {measure.time_signature}")
         print(f"      Key Signature: {measure.key_signature} fifths")
         print(f"      Divisions: {measure.divisions}")
         
