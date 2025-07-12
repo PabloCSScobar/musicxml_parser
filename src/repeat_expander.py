@@ -91,14 +91,33 @@ class RepeatExpander:
             # Check for volta
             if measure.ending_numbers and measure.ending_type:
                 if current_structure is None:
-                    # No repeat start found, treat as simple section
-                    current_structure = {
-                        'type': 'simple',
-                        'start_measure': i,
-                        'measures': [],
-                        'voltas': {},
-                        'repeat_count': 1
-                    }
+                    # Look for the most recent repeat structure that hasn't been closed
+                    # Voltas can extend beyond the repeat_end measure
+                    if structures:
+                        last_structure = structures[-1]
+                        if last_structure['type'] == 'repeat':
+                            # Extend the last repeat structure to include this volta
+                            current_structure = last_structure
+                            # Remove it from structures since we're still working on it
+                            structures.pop()
+                        else:
+                            # No recent repeat, treat as simple section
+                            current_structure = {
+                                'type': 'simple',
+                                'start_measure': i,
+                                'measures': [],
+                                'voltas': {},
+                                'repeat_count': 1
+                            }
+                    else:
+                        # No repeat start found, treat as simple section
+                        current_structure = {
+                            'type': 'simple',
+                            'start_measure': i,
+                            'measures': [],
+                            'voltas': {},
+                            'repeat_count': 1
+                        }
                 
                 # Handle volta
                 for ending_num in measure.ending_numbers:
