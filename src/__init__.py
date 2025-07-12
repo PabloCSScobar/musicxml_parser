@@ -9,7 +9,7 @@ A comprehensive MusicXML parser with support for:
 - Linear sequence generation for playback
 """
 
-from musicxml_parser import (
+from .musicxml_parser import (
     MusicXMLParser,
     MusicXMLScore,
     MusicXMLPart,
@@ -21,7 +21,7 @@ from musicxml_parser import (
     RepeatDirection
 )
 
-from repeat_expander import (
+from .repeat_expander import (
     RepeatExpander,
     LinearSequenceGenerator
 )

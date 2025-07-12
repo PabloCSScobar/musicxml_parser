@@ -71,7 +71,7 @@ class MusicXMLNote:
         """Validate note data"""
         if self.pitch is None:
             self.is_rest = True
-            self.pitch = "rest"  # Set pitch to "rest" for consistency with tests
+            # Keep pitch as None for rests - tests expect this
         # Set tie based on tie_start/tie_stop
         if self.tie_start:
             self.tie = "start"
@@ -95,9 +95,9 @@ class MusicXMLMeasure:
     notes: List[MusicXMLNote] = field(default_factory=list)
     
     @property
-    def time_signature(self) -> str:
-        """Return time signature as string (e.g., '4/4')"""
-        return f"{self._time_signature[0]}/{self._time_signature[1]}"
+    def time_signature(self) -> Tuple[int, int]:
+        """Return time signature as tuple (e.g., (4, 4))"""
+        return self._time_signature
     
     @time_signature.setter
     def time_signature(self, value: Tuple[int, int]):
@@ -130,9 +130,9 @@ class MusicXMLScore:
     key_signature: int = 0
     
     @property
-    def time_signature(self) -> str:
-        """Return time signature as string (e.g., '4/4')"""
-        return f"{self._time_signature[0]}/{self._time_signature[1]}"
+    def time_signature(self) -> Tuple[int, int]:
+        """Return time signature as tuple (e.g., (4, 4))"""
+        return self._time_signature
     
     @time_signature.setter
     def time_signature(self, value: Tuple[int, int]):
@@ -330,9 +330,46 @@ class MusicXMLParserPass2:
         for direction_elem in measure_elem.findall('direction'):
             self._parse_direction(direction_elem, measure)
         
-        # Parse barlines
+        # Parse barlines - collect all endings from all barlines first
+        all_ending_types = []
+        all_ending_numbers = []
+        
         for barline_elem in measure_elem.findall('barline'):
             self._parse_barline(barline_elem, measure)
+            
+            # Collect endings from this barline
+            endings = barline_elem.findall('ending')
+            for ending in endings:
+                number = ending.get('number')
+                ending_type = ending.get('type')
+                
+                if number:
+                    try:
+                        # Parse comma-separated numbers
+                        numbers = [int(n.strip()) for n in number.split(',')]
+                        all_ending_numbers.extend(numbers)
+                    except ValueError:
+                        self.logger.log_warning(f"Invalid ending number: {number}")
+                
+                if ending_type:
+                    try:
+                        all_ending_types.append(EndingType(ending_type))
+                    except ValueError:
+                        self.logger.log_warning(f"Invalid ending type: {ending_type}")
+        
+        # Apply ending prioritization across all barlines in the measure
+        if all_ending_numbers:
+            measure.ending_numbers = list(set(all_ending_numbers))  # Remove duplicates
+        
+        if all_ending_types:
+            # Prioritize ending types: STOP > START > DISCONTINUE
+            # STOP is most important as it indicates the end of a volta
+            if EndingType.STOP in all_ending_types:
+                measure.ending_type = EndingType.STOP
+            elif EndingType.START in all_ending_types:
+                measure.ending_type = EndingType.START
+            elif EndingType.DISCONTINUE in all_ending_types:
+                measure.ending_type = EndingType.DISCONTINUE
         
         # Parse notes
         for note_elem in measure_elem.findall('note'):
@@ -430,26 +467,6 @@ class MusicXMLParserPass2:
                         measure.repeat_count = int(times)
                     except ValueError:
                         self.logger.log_warning(f"Invalid repeat count: {times}")
-        
-        # Ending (volta)
-        ending = barline_elem.find('ending')
-        if ending is not None:
-            number = ending.get('number')
-            ending_type = ending.get('type')
-            
-            if number:
-                try:
-                    # Parse comma-separated numbers
-                    numbers = [int(n.strip()) for n in number.split(',')]
-                    measure.ending_numbers = numbers
-                except ValueError:
-                    self.logger.log_warning(f"Invalid ending number: {number}")
-            
-            if ending_type:
-                try:
-                    measure.ending_type = EndingType(ending_type)
-                except ValueError:
-                    self.logger.log_warning(f"Invalid ending type: {ending_type}")
     
     def _parse_note(self, note_elem: ET.Element, measure_num: int, start_time: Fraction) -> Optional[MusicXMLNote]:
         """Parse a single note"""
@@ -552,7 +569,7 @@ class MusicXMLParser:
         path = Path(file_path)
         
         if not path.exists():
-            raise FileNotFoundError(f"File not found: {file_path}")
+            raise MusicXMLError(f"File not found: {file_path}")
         
         if path.suffix.lower() == '.mxl':
             xml_content = self._extract_mxl(path)

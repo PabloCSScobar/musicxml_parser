@@ -314,3 +314,6 @@ Jeśli masz problemy z testami:
 2. Upewnij się że pliki testowe istnieją
 3. Sprawdź logi błędów
 4. Uruchom testy z `-v -s` dla więcej informacji 
+5. sprawdz kod Musescore
+6. Sprawdz dokumentacje musicxml
+7. sprawdz internet

@@ -12,7 +12,7 @@ from fractions import Fraction
 from unittest.mock import Mock, patch
 import xml.etree.ElementTree as ET
 
-from musicxml_parser import MusicXMLParser, MusicXMLScore, MusicXMLPart, MusicXMLMeasure, MusicXMLNote
+from musicxml_parser import MusicXMLParser, MusicXMLScore, MusicXMLPart, MusicXMLMeasure, MusicXMLNote, MusicXMLError
 from repeat_expander import RepeatExpander, LinearSequenceGenerator
 
 
@@ -109,7 +109,7 @@ class TestMusicXMLParser:
     
     def test_parse_nonexistent_file(self, parser):
         """Test parsowania nieistniejącego pliku"""
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(MusicXMLError):
             parser.parse_file("nonexistent_file.xml")
     
     def test_parse_malformed_xml(self, parser):
@@ -195,7 +195,7 @@ class TestMusicXMLElements:
             assert notes[0].duration == Fraction(1, 1)  # quarter note przy divisions=4
             
             # Druga nuta: przerwa
-            assert notes[1].pitch == "rest"
+            assert notes[1].pitch is None  # Changed from "rest" to None
             assert notes[1].is_rest
             assert notes[1].duration == Fraction(1, 1)
             
@@ -251,11 +251,11 @@ class TestMusicXMLElements:
             score = parser.parse_file(f.name)
             
             # Sprawdź metrum w pierwszym takcie
-            assert score.time_signature == "3/4"
+            assert score.time_signature == (3, 4)  # Changed from "3/4" to (3, 4)
             
             # Sprawdź zmianę metrum w drugim takcie
             measure2 = score.parts[0].measures[1]
-            assert measure2.time_signature == "6/8"
+            assert measure2.time_signature == (6, 8)  # Changed from "6/8" to (6, 8)
             
             os.unlink(f.name)
     
