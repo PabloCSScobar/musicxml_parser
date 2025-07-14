@@ -19,6 +19,21 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+
+def quarter_notes_to_ms(quarter_notes: Fraction, bpm: int) -> float:
+    """Convert quarter notes to milliseconds at given BPM"""
+    # 1 quarter note = 60000ms / BPM
+    ms_per_quarter = 60000.0 / bpm
+    return float(quarter_notes) * ms_per_quarter
+
+
+def ms_to_quarter_notes(milliseconds: float, bpm: int) -> Fraction:
+    """Convert milliseconds to quarter notes at given BPM"""
+    ms_per_quarter = 60000.0 / bpm
+    return Fraction(milliseconds / ms_per_quarter).limit_denominator()
+
+
+
 class RepeatExpander:
     """Expands repeats and voltas in MusicXML scores"""
     
@@ -338,6 +353,58 @@ class LinearSequenceGenerator:
     
     def __init__(self):
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+
+    def get_notes_with_milliseconds(self, score: MusicXMLScore) -> List[Dict]:
+        """Get all notes with millisecond timing information"""
+        all_notes = self.generate_sequence(score)
+        events = self.get_playback_events(score)
+        
+        # Build tempo map
+        tempo_map = []
+        current_tempo = score.tempo_bpm or 120
+        
+        for event in events:
+            if event['type'] == 'tempo_change':
+                tempo_map.append({
+                    'time': event['time'],
+                    'tempo': event['tempo']
+                })
+                current_tempo = event['tempo']
+        
+        # Convert notes to milliseconds
+        notes_with_ms = []
+        
+        for note in all_notes:
+            # Find applicable tempo
+            applicable_tempo = score.tempo_bpm or 120
+            for tempo_change in tempo_map:
+                if tempo_change['time'] <= note.start_time:
+                    applicable_tempo = tempo_change['tempo']
+                else:
+                    break
+            
+            # Convert times
+            start_ms = quarter_notes_to_ms(note.start_time, applicable_tempo)
+            duration_ms = quarter_notes_to_ms(note.duration, applicable_tempo)
+            end_ms = start_ms + duration_ms
+            
+            note_info = {
+                'pitch': note.pitch,
+                'is_rest': note.is_rest,
+                'staff': note.staff,
+                'voice': note.voice,
+                'measure': note.measure_number,
+                'start_time_quarter_notes': note.start_time,
+                'duration_quarter_notes': note.duration,
+                'start_time_ms': start_ms,
+                'duration_ms': duration_ms,
+                'end_time_ms': end_ms,
+                'tempo_bpm': applicable_tempo
+            }
+            
+            notes_with_ms.append(note_info)
+        
+        return notes_with_ms
     
     def generate_sequence(self, score: MusicXMLScore) -> List[MusicXMLNote]:
         """Generate a linear sequence of all notes in the score"""
