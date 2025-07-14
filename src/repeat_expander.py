@@ -90,12 +90,39 @@ class RepeatExpander:
         
         self.logger.debug(f"Analyzing {len(measures)} measures for repeat structures")
         
+        # First pass: identify all repeat ends to detect implicit repeat starts
+        repeat_ends = []
+        for idx, measure in enumerate(measures):
+            if measure.repeat_end:
+                repeat_ends.append((idx, measure.repeat_count))
+        
+        # Check if we need implicit repeat start from beginning
+        needs_implicit_start = False
+        if repeat_ends:
+            first_repeat_end_idx = repeat_ends[0][0]
+            # Check if there's no explicit repeat start before first repeat end
+            has_explicit_start = any(measures[j].repeat_start for j in range(first_repeat_end_idx + 1))
+            if not has_explicit_start:
+                needs_implicit_start = True
+                self.logger.debug(f"Detected implicit repeat start needed - first repeat_end at measure {first_repeat_end_idx} with no prior repeat_start")
+        
         while i < len(measures):
             measure = measures[i]
             measure_processed = False
             self.logger.debug(f"Processing measure {i}: repeat_start={measure.repeat_start}, repeat_end={measure.repeat_end}, ending_type={measure.ending_type}")
             
-            # Check for repeat start
+            # Handle implicit repeat start from beginning
+            if i == 0 and needs_implicit_start and current_structure is None:
+                current_structure = {
+                    'type': 'repeat',
+                    'start_measure': 0,
+                    'measures': [],
+                    'voltas': {},
+                    'repeat_count': 2  # Will be updated when we hit repeat_end
+                }
+                self.logger.debug("Created implicit repeat structure starting from measure 0")
+            
+            # Check for explicit repeat start
             if measure.repeat_start:
                 if current_structure is not None:
                     # End previous structure
@@ -109,6 +136,7 @@ class RepeatExpander:
                     'voltas': {},
                     'repeat_count': 2
                 }
+                self.logger.debug(f"Created explicit repeat structure starting at measure {i}")
             
             # Check for volta
             if measure.ending_numbers and measure.ending_type:
@@ -118,43 +146,64 @@ class RepeatExpander:
                     if structures:
                         last_structure = structures[-1]
                         if last_structure['type'] == 'repeat':
-                            # Extend the last repeat structure to include this volta
-                            current_structure = last_structure
-                            # Remove it from structures since we're still working on it
-                            structures.pop()
+                            # Volta found after repeat structure was closed
+                            # Add volta info to the last repeat structure (retroactively)
+                            self.logger.debug(f"Adding volta {measure.ending_numbers} to previous repeat structure")
+                            for ending_num in measure.ending_numbers:
+                                if ending_num not in last_structure['voltas']:
+                                    last_structure['voltas'][ending_num] = []
+                                
+                                if measure.ending_type == EndingType.START:
+                                    last_structure['voltas'][ending_num] = [i]
+                                elif measure.ending_type == EndingType.STOP or measure.ending_type == EndingType.DISCONTINUE:
+                                    if ending_num in last_structure['voltas']:
+                                        last_structure['voltas'][ending_num].append(i)
+                                    else:
+                                        # Volta stop without start, just add this measure
+                                        last_structure['voltas'][ending_num] = [i]
+                            
+                            # Don't continue with current_structure logic - volta is handled
+                            measure_processed = True
                         else:
-                            # No recent repeat, treat as simple section
+                            # No recent repeat, create implicit repeat structure
                             current_structure = {
-                                'type': 'simple',
-                                'start_measure': i,
-                                'measures': [],
+                                'type': 'repeat',
+                                'start_measure': 0,  # Implicit start from beginning
+                                'measures': list(range(i + 1)),  # All measures up to this point
                                 'voltas': {},
-                                'repeat_count': 1
+                                'repeat_count': 2
                             }
+                            self.logger.debug(f"Created implicit repeat for volta at measure {i}")
                     else:
-                        # No repeat start found, treat as simple section
+                        # No repeat start found, create implicit repeat structure
                         current_structure = {
-                            'type': 'simple',
-                            'start_measure': i,
-                            'measures': [],
+                            'type': 'repeat',
+                            'start_measure': 0,  # Implicit start from beginning  
+                            'measures': list(range(i + 1)),  # All measures up to this point
                             'voltas': {},
-                            'repeat_count': 1
+                            'repeat_count': 2
                         }
+                        self.logger.debug(f"Created implicit repeat for volta at measure {i} (no previous structures)")
                 
-                # Handle volta
-                for ending_num in measure.ending_numbers:
-                    if ending_num not in current_structure['voltas']:
-                        current_structure['voltas'][ending_num] = []
-                    
-                    if measure.ending_type == EndingType.START:
-                        current_structure['voltas'][ending_num] = [i]
-                    elif measure.ending_type == EndingType.STOP or measure.ending_type == EndingType.DISCONTINUE:
-                        if ending_num in current_structure['voltas']:
-                            current_structure['voltas'][ending_num].append(i)
+                # Handle volta for current structure (if not already processed)
+                if current_structure is not None:
+                    for ending_num in measure.ending_numbers:
+                        if ending_num not in current_structure['voltas']:
+                            current_structure['voltas'][ending_num] = []
+                        
+                        if measure.ending_type == EndingType.START:
+                            current_structure['voltas'][ending_num] = [i]
+                        elif measure.ending_type == EndingType.STOP or measure.ending_type == EndingType.DISCONTINUE:
+                            if ending_num in current_structure['voltas']:
+                                current_structure['voltas'][ending_num].append(i)
+                            else:
+                                # Volta stop without start, just add this measure
+                                current_structure['voltas'][ending_num] = [i]
             
             # Add measure to current structure FIRST (before processing repeat_end)
             if current_structure is not None:
-                current_structure['measures'].append(i)
+                if i not in current_structure['measures']:
+                    current_structure['measures'].append(i)
                 self.logger.debug(f"Added measure {i} to current structure")
                 measure_processed = True
             
@@ -164,38 +213,28 @@ class RepeatExpander:
                     current_structure['repeat_count'] = measure.repeat_count
                     structures.append(current_structure)
                     current_structure = None
-                    # measure_processed is already True from above
+                    self.logger.debug(f"Closed repeat structure at measure {i} with repeat_count={measure.repeat_count}")
                 else:
                     # Implicit forward repeat - backward repeat without explicit forward repeat
-                    # Need to restructure: convert all previous simple structures into one repeat structure
+                    # This shouldn't happen now that we handle implicit starts above, but keep as fallback
+                    all_measures = list(range(i + 1))  # All measures from 0 to current
                     
-                    # Collect all measures from previous simple structures
-                    all_measures = []
-                    for struct in structures:
-                        if struct['type'] == 'simple':
-                            all_measures.extend(struct['measures'])
-                    
-                    # Add current measure (but don't duplicate if already added)
-                    if i not in all_measures:
-                        all_measures.append(i)
-                    
-                    # Clear structures and create one repeat structure
-                    structures.clear()
                     implicit_structure = {
                         'type': 'repeat',
                         'start_measure': 0,  # Start from beginning
-                        'measures': sorted(list(set(all_measures))),  # All measures in order, no duplicates
+                        'measures': all_measures,
                         'voltas': {},
                         'repeat_count': measure.repeat_count
                     }
                     structures.append(implicit_structure)
-                    self.logger.debug(f"Created implicit repeat structure with measures {implicit_structure['measures']}, repeat_count={measure.repeat_count}")
-                    measure_processed = True  # Measure was included in the implicit repeat
+                    self.logger.debug(f"Created fallback implicit repeat structure with measures {implicit_structure['measures']}, repeat_count={measure.repeat_count}")
+                    measure_processed = True
             elif measure.ending_type == EndingType.DISCONTINUE:
                 # DISCONTINUE ends the repeat structure
                 if current_structure is not None and current_structure['type'] == 'repeat':
                     structures.append(current_structure)
                     current_structure = None
+                    self.logger.debug(f"Discontinued repeat structure at measure {i}")
             
             # Create simple structure for measures not part of any repeat structure
             if not measure_processed:
@@ -222,75 +261,122 @@ class RepeatExpander:
     
     def _expand_repeat_structure(self, structure: Dict, start_time: Fraction, original_measures: List[MusicXMLMeasure]) -> List[MusicXMLMeasure]:
         """Expand a single repeat structure"""
-        self.logger.debug(f"Expanding structure: type={structure['type']}, measures={structure['measures']}, repeat_count={structure['repeat_count']}")
+        self.logger.debug(f"Expanding structure: type={structure['type']}, measures={structure['measures']}, repeat_count={structure['repeat_count']}, voltas={structure['voltas']}")
         
         if structure['type'] == 'simple':
             # No repeats, just return measures with updated times
-            if structure['measures']:
-                measure_idx = structure['measures'][0]
+            expanded_measures = []
+            for measure_idx in structure['measures']:
                 if measure_idx < len(original_measures):
                     measure = deepcopy(original_measures[measure_idx])
-                    self._update_measure_times([measure], start_time)
-                    self.logger.debug(f"Expanded simple structure to 1 measure")
-                    return [measure]
-            return []
+                    expanded_measures.append(measure)
+            self._update_measure_times(expanded_measures, start_time)
+            self.logger.debug(f"Expanded simple structure to {len(expanded_measures)} measures")
+            return expanded_measures
         
         # Handle repeat with voltas
         expanded_measures = []
-        current_time = start_time
-        
         repeat_count = structure['repeat_count']
         base_measures = structure['measures']
         voltas = structure['voltas']
         
-        for repeat_num in range(1, repeat_count + 1):
-            # Add base measures (before any volta)
-            volta_start = None
-            if voltas:
-                volta_start = min(min(volta_measures) for volta_measures in voltas.values())
+        self.logger.debug(f"Base measures: {base_measures}")
+        self.logger.debug(f"Voltas: {voltas}")
+        
+        # Find volta boundaries
+        volta_measures = set()
+        for volta_nums, measure_range in voltas.items():
+            if measure_range:
+                # volta_range is [start, end] but we need all measures in range
+                start_measure = measure_range[0]
+                end_measure = measure_range[-1] if len(measure_range) > 1 else measure_range[0]
+                for m in range(start_measure, end_measure + 1):
+                    volta_measures.add(m)
+        
+        # Split base measures into: before volta, volta measures, after volta
+        pre_volta_measures = []
+        post_volta_measures = []
+        
+        if volta_measures:
+            min_volta = min(volta_measures)
+            max_volta = max(volta_measures)
             
-            if volta_start is not None:
-                # Add measures before volta
-                for measure_idx in base_measures:
-                    if measure_idx < volta_start and measure_idx < len(original_measures):
-                        measure = deepcopy(original_measures[measure_idx])
-                        expanded_measures.append(measure)
-                
-                # Add appropriate volta measures
-                volta_measures = self._get_volta_measures_for_repeat(voltas, repeat_num)
-                for measure_idx in volta_measures:
-                    if measure_idx < len(original_measures):
-                        measure = deepcopy(original_measures[measure_idx])
-                        expanded_measures.append(measure)
-            else:
-                # No voltas, just add all measures
-                for measure_idx in base_measures:
-                    if measure_idx < len(original_measures):
-                        measure = deepcopy(original_measures[measure_idx])
-                        expanded_measures.append(measure)
+            for measure_idx in base_measures:
+                if measure_idx < min_volta:
+                    pre_volta_measures.append(measure_idx)
+                elif measure_idx > max_volta:
+                    post_volta_measures.append(measure_idx)
+            
+            self.logger.debug(f"Pre-volta: {pre_volta_measures}, volta: {sorted(volta_measures)}, post-volta: {post_volta_measures}")
+        else:
+            # No voltas, all measures are pre-volta
+            pre_volta_measures = base_measures[:]
+        
+        # Generate repeated sections
+        for repeat_num in range(1, repeat_count + 1):
+            self.logger.debug(f"Generating repeat iteration {repeat_num}")
+            
+            # Add pre-volta measures (always included)
+            for measure_idx in pre_volta_measures:
+                if measure_idx < len(original_measures):
+                    measure = deepcopy(original_measures[measure_idx])
+                    expanded_measures.append(measure)
+                    self.logger.debug(f"Added pre-volta measure {measure_idx}")
+            
+            # Add appropriate volta measures for this iteration
+            if volta_measures:
+                volta_to_play = self._get_volta_for_iteration(voltas, repeat_num)
+                if volta_to_play:
+                    volta_range = voltas[volta_to_play]
+                    if volta_range:
+                        start_measure = volta_range[0]
+                        end_measure = volta_range[-1] if len(volta_range) > 1 else volta_range[0]
+                        for measure_idx in range(start_measure, end_measure + 1):
+                            if measure_idx < len(original_measures):
+                                measure = deepcopy(original_measures[measure_idx])
+                                expanded_measures.append(measure)
+                                self.logger.debug(f"Added volta {volta_to_play} measure {measure_idx}")
+            
+            # Add post-volta measures (always included)  
+            for measure_idx in post_volta_measures:
+                if measure_idx < len(original_measures):
+                    measure = deepcopy(original_measures[measure_idx])
+                    expanded_measures.append(measure)
+                    self.logger.debug(f"Added post-volta measure {measure_idx}")
         
         # Update times
-        self._update_measure_times(expanded_measures, current_time)
+        self._update_measure_times(expanded_measures, start_time)
         
-        self.logger.debug(f"Expanded repeat structure to {len(expanded_measures)} measures")
+        self.logger.debug(f"Expanded repeat structure to {len(expanded_measures)} measures: {[m.number for m in expanded_measures]}")
         return expanded_measures
     
-    def _get_volta_measures_for_repeat(self, voltas: Dict, repeat_num: int) -> List[int]:
-        """Get the measures for a specific repeat number"""
-        if repeat_num in voltas:
-            return list(range(voltas[repeat_num][0], voltas[repeat_num][-1] + 1))
-        else:
-            # Find the highest volta number <= repeat_num
-            applicable_volta = None
-            for volta_num in sorted(voltas.keys(), reverse=True):
-                if volta_num <= repeat_num:
-                    applicable_volta = volta_num
-                    break
-            
-            if applicable_volta is not None:
-                return list(range(voltas[applicable_volta][0], voltas[applicable_volta][-1] + 1))
+    def _get_volta_for_iteration(self, voltas: Dict, repeat_num: int) -> Optional[int]:
+        """Get the volta number to play for a specific repeat iteration"""
+        if not voltas:
+            return None
         
-        return []
+        # Direct match: volta number matches repeat iteration
+        if repeat_num in voltas:
+            self.logger.debug(f"Direct volta match: iteration {repeat_num} -> volta {repeat_num}")
+            return repeat_num
+        
+        # Find the highest volta number that should apply to this iteration
+        # Standard music logic: volta 1 plays on iteration 1, volta 2 on iteration 2, etc.
+        applicable_volta = None
+        for volta_num in sorted(voltas.keys(), reverse=True):
+            if volta_num <= repeat_num:
+                applicable_volta = volta_num
+                break
+        
+        if applicable_volta is not None:
+            self.logger.debug(f"Applicable volta for iteration {repeat_num}: volta {applicable_volta}")
+            return applicable_volta
+        
+        # Fallback: use the first available volta
+        first_volta = min(voltas.keys()) if voltas else None
+        if first_volta:
+            self.logger.debug(f"Fallback volta for iteration {repeat_num}: volta {first_volta}")
+        return first_volta
     
 
     
