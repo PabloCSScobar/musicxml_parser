@@ -945,37 +945,109 @@ class LinearSequenceGenerator:
         
         print(f"DEBUG: Measures timeline: {measures_timeline}")
         
-        # Look for patterns where same measure numbers appear multiple times
-        measure_occurrences = {}
-        for i, measure_num in enumerate(measures_timeline):
-            if measure_num not in measure_occurrences:
-                measure_occurrences[measure_num] = []
-            measure_occurrences[measure_num].append(i)
+        # Look for STRUCTURAL repeat patterns, not random phrase repetitions
+        # Focus on larger blocks of consecutive measures that repeat
         
-        print(f"DEBUG: Measure occurrences: {measure_occurrences}")
+        # Find blocks of consecutive repeated measures
+        structural_repeats = self._find_structural_repeats(measures_timeline)
         
-        # Find measures that appear multiple times (indicating repeats)
-        repeated_measures = {m: times for m, times in measure_occurrences.items() if len(times) > 1}
-        
-        if not repeated_measures:
-            # No repeats detected, return all notes as single iteration
-            print("DEBUG: No repeated measures detected - single iteration")
+        if not structural_repeats:
+            # No structural repeats detected, return all notes as single iteration
+            print("DEBUG: No structural repeats detected - single iteration")
             return [notes_with_ms]
         
-        print(f"DEBUG: Repeated measures: {repeated_measures}")
+        print(f"DEBUG: Found structural repeats: {structural_repeats}")
         
-        # Find the measure that appears most frequently and earliest
-        # This will be our primary measure for detecting iteration boundaries
-        primary_measure = None
-        max_occurrences = 0
+        # Build iterations based on structural repeat boundaries
+        iterations = self._build_iterations_from_structural_repeats(notes_with_ms, measures_timeline, structural_repeats)
         
-        for measure_num, positions in repeated_measures.items():
-            if len(positions) > max_occurrences or (len(positions) == max_occurrences and measure_num < primary_measure):
-                primary_measure = measure_num
-                max_occurrences = len(positions)
+        print(f"DEBUG: Created {len(iterations)} iterations")
+        return iterations
+    
+    def _find_structural_repeats(self, measures_timeline: List[int]) -> List[Dict]:
+        """Find structural repeat patterns (large blocks of consecutive measures)"""
+        # Look for patterns where sequences of measures repeat
+        # E.g. [0,1,2,3,4,5,6,7,8,0,1,2,3,4,5,6,7] -> structural repeat of 0-7
         
-        primary_positions = measure_occurrences[primary_measure]
-        print(f"DEBUG: Using primary measure {primary_measure} at positions {primary_positions} to detect iterations")
+        structural_repeats = []
+        
+        # Try different block sizes (prefer larger blocks)
+        for block_size in range(max(5, len(measures_timeline) // 10), 1, -1):  # Start from large blocks
+            if block_size * 2 > len(measures_timeline):
+                continue
+                
+            # Check if we can find this block size repeating
+            for start_pos in range(len(measures_timeline) - block_size * 2 + 1):
+                block1 = measures_timeline[start_pos:start_pos + block_size]
+                
+                # Look for the same block later in the timeline
+                for second_start in range(start_pos + block_size, len(measures_timeline) - block_size + 1):
+                    block2 = measures_timeline[second_start:second_start + block_size]
+                    
+                    if block1 == block2:
+                        # Found a structural repeat!
+                        repeat_info = {
+                            'block_measures': block1,
+                            'first_occurrence': (start_pos, start_pos + block_size),
+                            'second_occurrence': (second_start, second_start + block_size),
+                            'block_size': block_size
+                        }
+                        
+                        # Check if this repeat doesn't overlap with existing ones
+                        if not self._overlaps_with_existing_repeats(repeat_info, structural_repeats):
+                            structural_repeats.append(repeat_info)
+                            print(f"DEBUG: Found structural repeat: block {block1} at positions {start_pos}-{start_pos+block_size-1} and {second_start}-{second_start+block_size-1}")
+                            break  # Found repeat for this start position
+        
+        # Sort by block size (largest first) and filter overlaps
+        structural_repeats.sort(key=lambda x: x['block_size'], reverse=True)
+        
+        # Remove smaller overlapping repeats
+        filtered_repeats = []
+        for repeat in structural_repeats:
+            if not any(self._repeats_overlap(repeat, existing) for existing in filtered_repeats):
+                filtered_repeats.append(repeat)
+        
+        return filtered_repeats
+    
+    def _overlaps_with_existing_repeats(self, new_repeat: Dict, existing_repeats: List[Dict]) -> bool:
+        """Check if new repeat overlaps with existing ones"""
+        for existing in existing_repeats:
+            if self._repeats_overlap(new_repeat, existing):
+                return True
+        return False
+    
+    def _repeats_overlap(self, repeat1: Dict, repeat2: Dict) -> bool:
+        """Check if two repeats overlap in timeline positions"""
+        r1_start, r1_end = repeat1['first_occurrence']
+        r1_start2, r1_end2 = repeat1['second_occurrence']
+        r2_start, r2_end = repeat2['first_occurrence']
+        r2_start2, r2_end2 = repeat2['second_occurrence']
+        
+        # Check if any ranges overlap
+        ranges1 = [(r1_start, r1_end), (r1_start2, r1_end2)]
+        ranges2 = [(r2_start, r2_end), (r2_start2, r2_end2)]
+        
+        for start1, end1 in ranges1:
+            for start2, end2 in ranges2:
+                if start1 < end2 and start2 < end1:  # Ranges overlap
+                    return True
+        return False
+    
+    def _build_iterations_from_structural_repeats(self, notes_with_ms: List[Dict], 
+                                                measures_timeline: List[int], 
+                                                structural_repeats: List[Dict]) -> List[List[Dict]]:
+        """Build iterations based on structural repeats"""
+        if not structural_repeats:
+            return [notes_with_ms]
+        
+        # For now, use the largest structural repeat to define iterations
+        main_repeat = structural_repeats[0]  # Already sorted by size
+        
+        first_start, first_end = main_repeat['first_occurrence']
+        second_start, second_end = main_repeat['second_occurrence']
+        
+        print(f"DEBUG: Using main repeat: measures timeline positions {first_start}-{first_end-1} and {second_start}-{second_end-1}")
         
         # Build index of where each measure starts in the notes list
         measure_start_indices = {}
@@ -994,33 +1066,61 @@ class LinearSequenceGenerator:
         # Add end index
         measure_start_indices[len(measures_timeline)] = len(notes_with_ms)
         
-        print(f"DEBUG: Measure start indices: {measure_start_indices}")
+        # Create iterations:
+        # 1. Everything before first repeat
+        # 2. First occurrence of repeat
+        # 3. Second occurrence of repeat  
+        # 4. Everything after second repeat
         
-        # Create iterations based on primary measure occurrences
         iterations = []
         
-        for i, primary_pos in enumerate(primary_positions):
-            # Find start of this iteration
-            start_measure_pos = primary_pos
-            
-            # Find end of this iteration - either next occurrence of primary measure or end
-            if i + 1 < len(primary_positions):
-                end_measure_pos = primary_positions[i + 1]
-            else:
-                end_measure_pos = len(measures_timeline)
-            
-            start_note_idx = measure_start_indices[start_measure_pos]
-            end_note_idx = measure_start_indices[end_measure_pos]
-            
-            iteration_notes = notes_with_ms[start_note_idx:end_note_idx]
-            
-            # print(f"DEBUG: Iteration {i}: measures {start_measure_pos}-{end_measure_pos-1}, "
-            #       f"notes {start_note_idx}-{end_note_idx-1} ({len(iteration_notes)} notes)")
-            
-            if iteration_notes:
+        # Before first repeat
+        if first_start > 0:
+            start_note_idx = 0
+            end_note_idx = measure_start_indices[first_start]
+            if end_note_idx > start_note_idx:
+                iteration_notes = notes_with_ms[start_note_idx:end_note_idx]
                 iterations.append(iteration_notes)
+                print(f"DEBUG: Iteration 0 (before repeat): {len(iteration_notes)} notes")
         
-        print(f"DEBUG: Created {len(iterations)} iterations")
+        # First occurrence of repeat
+        start_note_idx = measure_start_indices[first_start]
+        end_note_idx = measure_start_indices[first_end]
+        if end_note_idx > start_note_idx:
+            iteration_notes = notes_with_ms[start_note_idx:end_note_idx]
+            iterations.append(iteration_notes)
+            print(f"DEBUG: Iteration {len(iterations)-1} (first repeat): {len(iteration_notes)} notes")
+        
+        # Between repeats (if any)
+        if second_start > first_end:
+            start_note_idx = measure_start_indices[first_end]
+            end_note_idx = measure_start_indices[second_start]
+            if end_note_idx > start_note_idx:
+                iteration_notes = notes_with_ms[start_note_idx:end_note_idx]
+                iterations.append(iteration_notes)
+                print(f"DEBUG: Iteration {len(iterations)-1} (between repeats): {len(iteration_notes)} notes")
+        
+        # Second occurrence of repeat
+        start_note_idx = measure_start_indices[second_start]
+        end_note_idx = measure_start_indices[second_end]
+        if end_note_idx > start_note_idx:
+            iteration_notes = notes_with_ms[start_note_idx:end_note_idx]
+            iterations.append(iteration_notes)
+            print(f"DEBUG: Iteration {len(iterations)-1} (second repeat): {len(iteration_notes)} notes")
+        
+        # After second repeat
+        if second_end < len(measures_timeline):
+            start_note_idx = measure_start_indices[second_end]
+            end_note_idx = len(notes_with_ms)
+            if end_note_idx > start_note_idx:
+                iteration_notes = notes_with_ms[start_note_idx:end_note_idx]
+                iterations.append(iteration_notes)
+                print(f"DEBUG: Iteration {len(iterations)-1} (after repeat): {len(iteration_notes)} notes")
+        
+        # Filter out empty iterations
+        iterations = [it for it in iterations if it]
+        
+        print(f"DEBUG: Final iterations: {len(iterations)} with sizes {[len(it) for it in iterations]}")
         return iterations
 
 
