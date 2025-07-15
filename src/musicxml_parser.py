@@ -93,6 +93,8 @@ class MusicXMLMeasure:
     ending_numbers: List[int] = field(default_factory=list)
     ending_type: Optional[EndingType] = None
     notes: List[MusicXMLNote] = field(default_factory=list)
+    implicit: bool = False # Added for pickup/anacrusis
+    _actual_duration: Fraction = field(default_factory=lambda: Fraction(0)) # Added for actual duration
     
     @property
     def time_signature(self) -> Tuple[int, int]:
@@ -244,7 +246,7 @@ class MusicXMLParserPass1:
                     self.logger.log_warning(f"Invalid MIDI program: {midi_program.text}")
             
             self.score.parts.append(part)
-            self.logger.log_info(f"Added part: {part.name} (id: {part.id})")
+            # self.logger.log_info(f"Added part: {part.name} (id: {part.id})")
 
 
 class MusicXMLParserPass2:
@@ -319,8 +321,14 @@ class MusicXMLParserPass2:
         # Set time signature using the property setter
         measure._time_signature = self.current_time_sig
         
+        # Check if this is an implicit measure (pickup/anacrusis)
+        if measure_elem.get('implicit') == 'yes':
+            measure.implicit = True
+        
+        # Track timing within measure like MuseScore
         measure_start_time = self.current_time
-        note_start_time = measure_start_time
+        m_time = Fraction(0)  # current time within measure
+        m_dura = Fraction(0)  # maximum time reached in measure
         
         # Parse attributes first
         for attr_elem in measure_elem.findall('attributes'):
@@ -338,39 +346,30 @@ class MusicXMLParserPass2:
         for barline_elem in measure_elem.findall('barline'):
             self._parse_barline(barline_elem, measure)
             
-            # Determine barline location
-            location = barline_elem.get('location', 'right')  # default to right
-            
-            # Collect endings from this barline
-            endings = barline_elem.findall('ending')
-            for ending in endings:
-                number = ending.get('number')
-                ending_type = ending.get('type')
+            # Parse ending (volta) information
+            ending_elem = barline_elem.find('ending')
+            if ending_elem is not None:
+                ending_type = ending_elem.get('type')
+                ending_number = ending_elem.get('number')
                 
-                if number:
+                if ending_type and ending_number:
                     try:
-                        # Parse comma-separated numbers
-                        numbers = [int(n.strip()) for n in number.split(',')]
-                        all_ending_numbers.extend(numbers)
-                    except ValueError:
-                        self.logger.log_warning(f"Invalid ending number: {number}")
-                
-                if ending_type:
-                    try:
-                        ending_type_enum = EndingType(ending_type)
+                        ending_numbers = [int(n.strip()) for n in ending_number.split(',')]
+                        all_ending_numbers.extend(ending_numbers)
+                        
+                        location = barline_elem.get('location', 'right')
                         if location == 'left':
-                            left_ending_types.append(ending_type_enum)
-                        else:  # right or middle
-                            right_ending_types.append(ending_type_enum)
+                            left_ending_types.append(EndingType(ending_type))
+                        else:  # right or no location (defaults to right)
+                            right_ending_types.append(EndingType(ending_type))
                     except ValueError:
-                        self.logger.log_warning(f"Invalid ending type: {ending_type}")
+                        self.logger.log_warning(f"Invalid ending number: {ending_number}")
         
-        # Apply ending prioritization: right barline takes precedence over left
-        if all_ending_numbers:
-            measure.ending_numbers = list(set(all_ending_numbers))  # Remove duplicates
-        
-        # Choose ending type: right barline has priority over left barline
+        # Use right barline endings if available, otherwise left barline endings
         final_ending_types = right_ending_types if right_ending_types else left_ending_types
+        
+        if all_ending_numbers:
+            measure.ending_numbers = list(set(all_ending_numbers))
         
         if final_ending_types:
             # Within the same barline, prioritize: STOP > DISCONTINUE > START
@@ -382,13 +381,59 @@ class MusicXMLParserPass2:
             elif EndingType.START in final_ending_types:
                 measure.ending_type = EndingType.START
         
-        # Parse notes
-        for note_elem in measure_elem.findall('note'):
-            note = self._parse_note(note_elem, measure_num, note_start_time)
-            if note:
-                measure.notes.append(note)
-                # Advance time for all notes (including rests)
-                note_start_time += note.duration
+        # Parse measure content in order, handling backup/forward
+        for child in measure_elem:
+            if child.tag == 'note':
+                note = self._parse_note(child, measure_num, measure_start_time + m_time)
+                if note:
+                    measure.notes.append(note)
+                    # Update m_time and m_dura like MuseScore
+                    if not note.is_chord:  # Don't advance time for chord notes
+                        old_m_time = m_time
+                        m_time += note.duration
+                        # self.logger.log_info(f"Measure {measure_num}: note duration {note.duration} quarter notes, m_time {old_m_time} -> {m_time}")
+                        if m_time > m_dura:
+                            old_m_dura = m_dura
+                            m_dura = m_time
+                            # self.logger.log_info(f"Measure {measure_num}: updated m_dura {old_m_dura} -> {m_dura}")
+                    else:
+                        pass
+                        # self.logger.log_info(f"Measure {measure_num}: chord note, m_time unchanged at {m_time}")
+            
+            elif child.tag == 'backup':
+                duration_elem = child.find('duration')
+                if duration_elem is not None:
+                    try:
+                        backup_duration = int(duration_elem.text)
+                        backup_quarter_notes = Fraction(backup_duration, self.current_divisions)
+                        old_m_time = m_time
+                        m_time -= backup_quarter_notes
+                        # self.logger.log_info(f"Measure {measure_num}: backup {backup_duration} units ({backup_quarter_notes} quarter notes), m_time {old_m_time} -> {m_time}")
+                        if m_time < Fraction(0):
+                            m_time = Fraction(0)
+                    except ValueError:
+                        self.logger.log_warning(f"Invalid backup duration: {duration_elem.text}")
+            
+            elif child.tag == 'forward':
+                duration_elem = child.find('duration')
+                if duration_elem is not None:
+                    try:
+                        forward_duration = int(duration_elem.text)
+                        forward_quarter_notes = Fraction(forward_duration, self.current_divisions)
+                        old_m_time = m_time
+                        m_time += forward_quarter_notes
+                        # self.logger.log_info(f"Measure {measure_num}: forward {forward_duration} units ({forward_quarter_notes} quarter notes), m_time {old_m_time} -> {m_time}")
+                        if m_time > m_dura:
+                            m_dura = m_time
+                    except ValueError:
+                        self.logger.log_warning(f"Invalid forward duration: {duration_elem.text}")
+        
+        # Set final duration based on actual content
+        measure._actual_duration = m_dura
+        
+        # # Debug logging
+        # self.logger.log_info(f"Measure {measure_num}: m_dura={m_dura}, notes_count={len(measure.notes)}")
+        # self.logger.log_info(f"Measure {measure_num}: divisions={self.current_divisions}")
         
         return measure
     
@@ -559,7 +604,26 @@ class MusicXMLParserPass2:
         )
     
     def _calculate_measure_duration(self, measure: MusicXMLMeasure) -> Fraction:
-        """Calculate the duration of a measure"""
+        """Calculate the duration of a measure based on its actual content"""
+        # Use actual duration calculated during parsing if available
+        if hasattr(measure, '_actual_duration') and measure._actual_duration > Fraction(0):
+            return measure._actual_duration
+        
+        # Fallback: calculate from notes if available
+        if measure.notes:
+            # Calculate the actual duration based on the notes in the measure
+            # Track the maximum time reached in the measure
+            max_time = Fraction(0)
+            current_time = Fraction(0)
+            
+            for note in measure.notes:
+                current_time += note.duration
+                if current_time > max_time:
+                    max_time = current_time
+            
+            return max_time
+        
+        # If no notes, fall back to time signature
         beats, beat_type = measure._time_signature
         # beats/beat_type gives the duration in terms of whole notes
         # Multiply by 4 to convert to quarter notes
