@@ -382,9 +382,22 @@ class MusicXMLParserPass2:
                 measure.ending_type = EndingType.START
         
         # Parse measure content in order, handling backup/forward
+        last_note_start_time = measure_start_time  # Track start time of the last non-chord note
+        
         for child in measure_elem:
             if child.tag == 'note':
-                note = self._parse_note(child, measure_num, measure_start_time + m_time)
+                # Determine start time for this note
+                has_chord_element = child.find('chord') is not None
+                
+                if has_chord_element:
+                    # This is a chord note - use the start time of the last non-chord note
+                    note_start_time = last_note_start_time
+                else:
+                    # This is a regular note (potentially the first note of a new chord)
+                    note_start_time = measure_start_time + m_time
+                    last_note_start_time = note_start_time  # Update for potential following chord notes
+                
+                note = self._parse_note(child, measure_num, note_start_time)
                 if note:
                     measure.notes.append(note)
                     # Update m_time and m_dura like MuseScore

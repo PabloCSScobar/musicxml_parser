@@ -21,7 +21,8 @@ def debug_expanded_measures():
     sequence_gen = LinearSequenceGenerator()
     
     # Parse original and expanded scores
-    original_score = parser.parse_file('data/Fur_Elise.mxl')
+    original_score = parser.parse_file('data/fur_elize_multinotes.musicxml')
+    # original_score = parser.parse_file('data/Fur_Elise_simplified_repetitions.musicxml')
     expanded_score = expander.expand_repeats(original_score)
     
     # Get expanded notes with display_ms
@@ -34,16 +35,16 @@ def debug_expanded_measures():
     current_measure = None
     measure_notes = []
     
-    print(expanded_notes_with_display)
     for note in expanded_notes_with_display:
-        if note['measure'] != current_measure:
-            # Print previous measure if exists
-            if current_measure is not None:
-                print_measure_timing(current_measure, measure_notes)
+        print(note)
+        # if note['measure'] != current_measure:
+        #     # Print previous measure if exists
+        #     if current_measure is not None:
+        #         print_measure_timing(current_measure, measure_notes)
             
-            # Start new measure
-            current_measure = note['measure']
-            measure_notes = []
+        #     # Start new measure
+        #     current_measure = note['measure']
+        #     measure_notes = []
         
         measure_notes.append(note)
     

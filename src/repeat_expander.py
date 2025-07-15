@@ -321,7 +321,6 @@ class RepeatExpander:
                 if measure_idx < len(original_measures):
                     measure = deepcopy(original_measures[measure_idx])
                     expanded_measures.append(measure)
-                    # self.logger.debug(f"Added pre-volta measure {measure_idx}")
             
             # Add appropriate volta measures for this iteration
             if volta_measures:
@@ -388,15 +387,24 @@ class RepeatExpander:
             # Reset to measure start for each voice/staff
             measure_start = current_time
             voice_times = {}
+            voice_last_non_chord_time = {}  # Track the start time of the last non-chord note per voice
             
             for note in measure.notes:
                 # Track time per voice to handle multiple voices
                 voice_key = (note.staff, note.voice)
                 if voice_key not in voice_times:
                     voice_times[voice_key] = measure_start
+                    voice_last_non_chord_time[voice_key] = measure_start
                 
-                note.start_time = voice_times[voice_key]
-                voice_times[voice_key] += note.duration
+                if note.is_chord:
+                    # Chord notes use the start_time of the last non-chord note in the same voice
+                    note.start_time = voice_last_non_chord_time[voice_key]
+                    # Do NOT advance voice_times for chord notes
+                else:
+                    # Regular note - use current voice time and advance it
+                    note.start_time = voice_times[voice_key]
+                    voice_times[voice_key] += note.duration
+                    voice_last_non_chord_time[voice_key] = note.start_time
             
             # Move to next measure - use the longest voice duration
             if voice_times:
@@ -408,36 +416,34 @@ class RepeatExpander:
         """Update start times for measures without repeats"""
         current_time = Fraction(0)
         
-        print(f"DEBUG: _update_start_times called with {len(measures)} measures")
-        
-        for i, measure in enumerate(measures):
+        for measure in measures:
             # Reset to measure start for each voice/staff
             measure_start = current_time
             voice_times = {}
-            
-            print(f"DEBUG: Measure {measure.number} starts at {float(current_time):.1f} quarter notes")
+            voice_last_non_chord_time = {}  # Track the start time of the last non-chord note per voice
             
             for note in measure.notes:
                 # Track time per voice to handle multiple voices
                 voice_key = (note.staff, note.voice)
                 if voice_key not in voice_times:
                     voice_times[voice_key] = measure_start
+                    voice_last_non_chord_time[voice_key] = measure_start
                 
-                note.start_time = voice_times[voice_key]
-                voice_times[voice_key] += note.duration
+                if note.is_chord:
+                    # Chord notes use the start_time of the last non-chord note in the same voice
+                    note.start_time = voice_last_non_chord_time[voice_key]
+                    # Do NOT advance voice_times for chord notes
+                else:
+                    # Regular note - use current voice time and advance it
+                    note.start_time = voice_times[voice_key]
+                    voice_times[voice_key] += note.duration
+                    voice_last_non_chord_time[voice_key] = note.start_time
             
             # Move to next measure - use the longest voice duration
             if voice_times:
-                old_current_time = current_time
                 current_time = max(voice_times.values())
-                print(f"DEBUG: Measure {measure.number} voice_times end at {float(current_time):.1f} quarter notes (was {float(old_current_time):.1f})")
             else:
-                old_current_time = current_time
-                measure_duration = self._calculate_measure_duration(measure)
-                current_time += measure_duration
-                print(f"DEBUG: Measure {measure.number} (empty) duration {float(measure_duration):.1f} quarter notes, current_time {float(old_current_time):.1f} -> {float(current_time):.1f}")
-            
-            print(f"DEBUG: Measure {measure.number} time signature: {measure._time_signature}")
+                current_time += self._calculate_measure_duration(measure)
     
     def _calculate_measure_duration(self, measure: MusicXMLMeasure) -> Fraction:
         """Calculate the duration of a measure based on its actual content"""
