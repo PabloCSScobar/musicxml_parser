@@ -523,7 +523,10 @@ class LinearSequenceGenerator:
                 'start_time_ms': start_ms,
                 'duration_ms': duration_ms,
                 'end_time_ms': end_ms,
-                'tempo_bpm': applicable_tempo
+                'tempo_bpm': applicable_tempo,
+                'tie_start': note.tie_start,
+                'tie_stop': note.tie_stop,
+                'is_chord': note.is_chord
             }
             
             notes_with_ms.append(note_info)
