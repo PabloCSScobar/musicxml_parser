@@ -11,6 +11,7 @@ A comprehensive MusicXML parser written in Python, inspired by MuseScore's archi
 - **Multi-staff support**: Separates notes by staff (e.g., left/right hand for piano)
 - **Timing conversion**: Converts musical time to milliseconds with tempo changes
 - **Playback events**: Generates MIDI-like note_on/note_off events
+- **Advanced cursor positioning**: Dual timing system for proper UI cursor handling in scores with repeats
 - **Comprehensive analysis**: Extracts tempo changes, time signatures, key signatures
 
 ## Installation
@@ -67,6 +68,11 @@ right_hand, left_hand = generator.get_notes_by_hand(expanded_score)
 # Generate playback events with millisecond timing
 notes_with_ms = generator.get_notes_with_milliseconds(expanded_score)
 events = generator.get_playback_events(expanded_score)
+
+# 🚀 ADVANCED: Get notes with dual timing for UI cursor positioning (OSMD integration)
+# This handles repeat display correctly - cursor shows original position
+# while playback uses expanded timeline
+notes_with_display = generator.get_expanded_notes_with_milliseconds(score, expanded_score)
 ```
 
 ## What You Can Extract
@@ -88,10 +94,11 @@ events = generator.get_playback_events(expanded_score)
 - **MIDI-like events**: note_on, note_off, tempo_change events with precise timing
 - **Hand separation**: Notes split by staff for piano pieces
 - **Millisecond timing**: Real-time playback positions calculated from tempo
+- **Dual timing for UI cursors**: Both `start_time_ms` (playback) and `start_time_display_ms` (score cursor) for proper repeat handling in music notation software
 
 ### Analysis Results
 ```python
-# Example output structure
+# Basic note structure
 {
     'pitch': 'C4',
     'start_time_ms': 0.0,
@@ -102,7 +109,51 @@ events = generator.get_playback_events(expanded_score)
     'is_rest': False,
     'is_chord': False
 }
+
+# Advanced: Notes with dual timing (for UI cursor positioning)
+{
+    'pitch': 'C4',
+    'start_time_ms': 2000.0,        # Real playback time (with repeats)
+    'start_time_display_ms': 0.0,   # UI cursor position (original score)
+    'duration_ms': 500.0,
+    'staff': 1,
+    'measure': 1,
+    'iteration': 1,                  # Which repeat iteration (0, 1...)
+    'tempo_bpm': 120
+}
 ```
+
+## Advanced Use Case: Music Notation UI Cursor Positioning
+
+When building music notation software (like OSMD integration), scores with repeats need special handling for cursor positioning. The problem: during playback, the actual time progresses linearly through expanded repeats, but the visual cursor should show the position in the original score notation.
+
+```python
+# For UI applications (like OSMD integration)
+parser = MusicXMLParser()
+score = parser.parse_file('score_with_repeats.xml')
+
+expander = RepeatExpander()
+expanded_score = expander.expand_repeats(score)
+
+generator = LinearSequenceGenerator()
+
+# Get notes with dual timing - key for UI cursor positioning
+notes_with_display = generator.get_expanded_notes_with_milliseconds(score, expanded_score)
+
+for note in notes_with_display:
+    # start_time_ms: Real playback time (0, 500, 1000, 1500, 2000, 2500...)
+    # start_time_display_ms: Score cursor position (0, 500, 1000, 0, 500, 1000...)
+    # iteration: Which repeat iteration (0, 0, 0, 1, 1, 1...)
+    
+    print(f"Measure {note['measure']}, Iteration {note['iteration']}")
+    print(f"  Playback time: {note['start_time_ms']}ms")
+    print(f"  Cursor position: {note['start_time_display_ms']}ms")
+```
+
+This enables:
+- **Accurate playback timing**: Audio plays at correct times with expanded repeats
+- **Correct cursor positioning**: Visual cursor jumps back to measure 1 when repeat starts
+- **Repeat iteration tracking**: Know which iteration is currently playing
 
 ## Supported MusicXML Elements
 
