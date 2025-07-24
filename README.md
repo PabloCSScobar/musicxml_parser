@@ -1,314 +1,130 @@
 
-# MusicXML Parser - Profesjonalny Parser Inspirowany MuseScore
+# MusicXML Parser
 
-## Opis
+A comprehensive MusicXML parser written in Python, inspired by MuseScore's architecture. Parses MusicXML files and expands repeats and voltas into linear sequences for playback and analysis.
 
-Zaawansowany parser MusicXML napisany w Pythonie, inspirowany architekturą MuseScore. Parser oferuje komprehensywne wsparcie dla parsowania plików MusicXML z obsługą repetycji, volt, zmian tempa i metrum, oraz podziału na ręce (lewa/prawa).
+## Features
 
-## Kluczowe Funkcje
+- **Two-pass parsing** inspired by MuseScore architecture
+- **Complete MusicXML support**: .xml, .musicxml, and compressed .mxl files
+- **Intelligent repeat expansion**: Automatically expands repeats and voltas into linear sequences
+- **Multi-staff support**: Separates notes by staff (e.g., left/right hand for piano)
+- **Timing conversion**: Converts musical time to milliseconds with tempo changes
+- **Playback events**: Generates MIDI-like note_on/note_off events
+- **Comprehensive analysis**: Extracts tempo changes, time signatures, key signatures
 
-### 🏗️ Architektura Inspirowana MuseScore
-- **Dwuprzebiegowe parsowanie** (Pass1 + Pass2) jak w MuseScore
-- **Robustne obsługa błędów** z szczegółowym logowaniem
-- **Modułowa struktura** ułatwiająca rozszerzanie
-
-### 🎵 Zaawansowane Parsowanie MusicXML
-- **Pełne wsparcie dla MusicXML 4.0**
-- **Obsługa formatów**: .xml, .musicxml, .mxl (skompresowane)
-- **Parsowanie wszystkich elementów**: nuty, przerwy, alteracje, ligature
-- **Metadane**: tytuł, kompozytor, instrumenty, MIDI
-
-### 🔄 Inteligentne Rozwijanie Repetycji
-- **Automatyczne rozwijanie** repetycji i volt
-- **Obsługa zagnieżdżonych struktur** repeat
-- **Generowanie liniowej sekwencji** nut do playbacku
-- **Zachowanie oryginalnej struktury** dla analizy
-
-### 🎹 Obsługa Wielopięciolinii
-- **Automatyczny podział** na ręce (staff 1=prawa, staff 2=lewa)
-- **Obsługa wielogłosowości** (voices)
-- **Śledzenie zmian** tempa i metrum
-- **Precyzyjne obliczenia** czasów i duracji
-
-### 🎮 Generowanie Zdarzeń Playback
-- **Zdarzenia MIDI**: note_on, note_off, tempo_change
-- **Precyzyjne timing** z użyciem frakcji
-- **Separacja na kanały** (prawa/lewa ręka)
-- **Gotowe do integracji** z systemami playback
-
-## Instalacja
+## Installation
 
 ```bash
-# Klonowanie repozytorium
+# Clone the repository
 git clone <repository-url>
 cd musicxml_parser
 
-# Instalacja zależności
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-## Zależności
+## Quick Start
 
+### Command Line Usage
+
+```bash
+# Basic analysis
+python main.py path/to/score.xml
+
+# Detailed analysis with verbose output
+python main.py path/to/score.xml --verbose
+
+# Skip repeat expansion
+python main.py path/to/score.xml --no-expand
 ```
-music21>=9.1.0    # Podstawowe funkcje parsowania MusicXML
-pytest>=7.0.0     # Framework testowy
-lxml>=4.9.0       # Szybkie parsowanie XML
-```
 
-## Użycie
-
-### Podstawowe Użycie
+### Python API
 
 ```python
 from src.musicxml_parser import MusicXMLParser
 from src.repeat_expander import RepeatExpander, LinearSequenceGenerator
 
-# Parsowanie pliku
+# Parse MusicXML file
 parser = MusicXMLParser()
 score = parser.parse_file('path/to/score.xml')
 
-print(f"Tytuł: {score.title}")
-print(f"Kompozytor: {score.composer}")
-print(f"Części: {len(score.parts)}")
+print(f"Title: {score.title}")
+print(f"Composer: {score.composer}")
+print(f"Parts: {len(score.parts)}")
 
-# Rozwijanie repetycji
+# Expand repeats and voltas
 expander = RepeatExpander()
 expanded_score = expander.expand_repeats(score)
 
-# Generowanie liniowej sekwencji
+# Generate linear sequence of notes
 generator = LinearSequenceGenerator()
 notes = generator.generate_sequence(expanded_score)
 
-# Podział na ręce
+# Separate by hand (staff 1 = right, staff 2 = left)
 right_hand, left_hand = generator.get_notes_by_hand(expanded_score)
 
-# Zdarzenia playback
+# Generate playback events with millisecond timing
+notes_with_ms = generator.get_notes_with_milliseconds(expanded_score)
 events = generator.get_playback_events(expanded_score)
 ```
 
-### Przykład CLI
+## What You Can Extract
 
-```bash
-# Podstawowa analiza
-python main.py tests/data/simple_score.xml
+### Musical Structure
+- **Score metadata**: title, composer, parts, instruments
+- **Timing information**: tempo (BPM), time signatures, key signatures
+- **Measure analysis**: note counts, durations, staff assignments
+- **Repeat structures**: repeat marks, volta endings, expansion ratios
 
-# Szczegółowa analiza
-python main.py tests/data/complex_score.xml --verbose
+### Note-Level Data
+- **Pitch information**: note names (e.g., "C4", "F#5") or rests
+- **Timing**: start times, durations in quarter notes and milliseconds
+- **Voice/Staff assignment**: multi-voice and multi-staff support
+- **Musical attributes**: ties, chords, measure numbers
 
-# Bez rozwijania repetycji
-python main.py Fur_Elise.mxl --no-expand
+### Playback-Ready Output
+- **Linear note sequence**: All notes in chronological order after repeat expansion
+- **MIDI-like events**: note_on, note_off, tempo_change events with precise timing
+- **Hand separation**: Notes split by staff for piano pieces
+- **Millisecond timing**: Real-time playback positions calculated from tempo
+
+### Analysis Results
+```python
+# Example output structure
+{
+    'pitch': 'C4',
+    'start_time_ms': 0.0,
+    'duration_ms': 500.0,
+    'staff': 1,
+    'measure': 1,
+    'tempo_bpm': 120,
+    'is_rest': False,
+    'is_chord': False
+}
 ```
 
-## Struktura Projektu
+## Supported MusicXML Elements
+
+✅ **Fully Supported**
+- Score structure (parts, measures, notes, rests)
+- Repeats (forward/backward) and voltas (1st/2nd endings)
+- Tempo changes (metronome, sound tempo)
+- Time and key signatures
+- Multi-staff parts (piano left/right hand)
+- Pitch information (step, alter, octave)
+- Ties and chord notation
+- Implicit repeats and anacrusis measures
+
+
+## Project Structure
 
 ```
 musicxml_parser/
 ├── src/
-│   ├── __init__.py              # Eksport głównych klas
-│   ├── musicxml_parser.py       # Główny parser (Pass1 + Pass2)
-│   └── repeat_expander.py       # Rozwijanie repetycji i generowanie sekwencji
-├── tests/
-│   ├── data/
-│   │   ├── simple_score.xml     # Prosty plik testowy z repetycjami
-│   │   └── complex_score.xml    # Złożony plik z wieloma funkcjami
-│   └── test_musicxml_parser.py  # Komprehensywne testy
-├── main.py                      # Główny skrypt demonstracyjny
-├── requirements.txt             # Zależności
-└── README.md                    # Dokumentacja
+│   ├── musicxml_parser.py       # Main parser (two-pass parsing)
+│   └── repeat_expander.py       # Repeat expansion and sequence generation
+├── main.py                      # CLI demo script
+├── tests/                       # Test suite
+└── README.md
 ```
-
-## Architektura
-
-### Dwuprzebiegowe Parsowanie
-
-**Pass 1 (MusicXMLParserPass1)**:
-- Parsowanie struktury i metadanych
-- Tworzenie części i instrumentów
-- Zbieranie informacji o błędach
-
-**Pass 2 (MusicXMLParserPass2)**:
-- Szczegółowe parsowanie treści muzycznej
-- Obsługa nut, przerw, repetycji
-- Obliczanie czasów i duracji
-
-### Klasy Główne
-
-```python
-# Reprezentacja danych
-MusicXMLScore      # Kompletny utwór
-MusicXMLPart       # Część (np. Piano)
-MusicXMLMeasure    # Takt z właściwościami
-MusicXMLNote       # Nuta lub przerwa
-
-# Funkcjonalność
-MusicXMLParser     # Główny parser
-RepeatExpander     # Rozwijanie repetycji
-LinearSequenceGenerator  # Generowanie sekwencji
-```
-
-## Testowanie
-
-### Uruchamianie Testów
-
-```bash
-# Wszystkie testy
-pytest tests/ -v
-
-# Konkretna klasa testów
-pytest tests/test_musicxml_parser.py::TestMusicXMLParser -v
-
-# Testy z pokryciem
-pytest tests/ --cov=src --cov-report=html
-```
-
-### Struktura Testów
-
-- **TestMusicXMLParser**: Parsowanie podstawowe, błędy, formaty
-- **TestRepeatExpander**: Rozwijanie repetycji i volt
-- **TestLinearSequenceGenerator**: Generowanie sekwencji i zdarzeń
-- **TestIntegration**: Testy end-to-end całego pipeline
-
-## Przykłady Użycia
-
-### Analiza Pliku MusicXML
-
-```python
-parser = MusicXMLParser()
-score = parser.parse_file('example.xml')
-
-# Informacje o utworze
-print(f"Tytuł: {score.title}")
-print(f"Błędy parsowania: {len(score.errors)}")
-
-# Analiza części
-for part in score.parts:
-    print(f"Część: {part.name}")
-    print(f"Instrumenty: {part.instrument}")
-    print(f"Pięciolinie: {part.staves}")
-    print(f"Takty: {len(part.measures)}")
-```
-
-### Obsługa Repetycji
-
-```python
-# Oryginalny utwór
-original_measures = len(score.parts[0].measures)
-
-# Rozwijanie repetycji
-expander = RepeatExpander()
-expanded_score = expander.expand_repeats(score)
-
-# Porównanie
-expanded_measures = len(expanded_score.parts[0].measures)
-print(f"Rozwinięto z {original_measures} do {expanded_measures} taktów")
-```
-
-### Generowanie Playback
-
-```python
-generator = LinearSequenceGenerator()
-
-# Wszystkie nuty w kolejności czasowej
-notes = generator.generate_sequence(expanded_score)
-
-# Podział na ręce
-right_hand, left_hand = generator.get_notes_by_hand(expanded_score)
-
-# Zdarzenia do playback
-events = generator.get_playback_events(expanded_score)
-
-for event in events[:10]:  # Pierwsze 10 zdarzeń
-    print(f"[{event['time']}] {event['type']}: {event.get('pitch', event.get('tempo', 'N/A'))}")
-```
-
-## Obsługiwane Elementy MusicXML
-
-### ✅ Pełne Wsparcie
-- **Struktura**: score-partwise, part-list, parts
-- **Metadane**: work, identification, creator
-- **Atrybuty**: divisions, key, time, clef, staves
-- **Nuty**: pitch (step, alter, octave), duration, voice, staff
-- **Przerwy**: rest elements
-- **Repetycje**: repeat direction="forward/backward"
-- **Volty**: ending number, type="start/stop/discontinue"
-- **Tempo**: metronome, sound tempo
-- **Barlines**: repeat, ending, bar-style
-
-### 🚧 Planowane Rozszerzenia
-- **Ozdobniki**: trills, mordents, turns
-- **Artikulacja**: staccato, legato, accent
-- **Dynamika**: forte, piano, crescendo
-- **Pedał**: sustain, sostenuto
-- **Teksty**: lyrics, chord symbols
-
-## Wydajność
-
-### Benchmarki (na typowym pliku 100 taktów)
-- **Parsowanie**: ~50ms
-- **Rozwijanie repetycji**: ~10ms
-- **Generowanie sekwencji**: ~5ms
-- **Pamięć**: ~2MB na 1000 nut
-
-### Optymalizacje
-- **Lazy loading** dla dużych plików
-- **Caching** wyników parsowania
-- **Streaming** dla plików .mxl
-- **Równoległe przetwarzanie** części
-
-## Rozwiązywanie Problemów
-
-### Częste Błędy
-
-**"No part-list found"**
-```python
-# Sprawdź strukturę XML
-# MusicXML musi mieć element <part-list>
-```
-
-**"Invalid XML"**
-```python
-# Sprawdź kodowanie pliku (UTF-8)
-# Sprawdź poprawność składni XML
-```
-
-**"File not found"**
-```python
-# Sprawdź ścieżkę do pliku
-# Sprawdź rozszerzenie (.xml, .musicxml, .mxl)
-```
-
-### Debugowanie
-
-```python
-# Włącz szczegółowe logowanie
-import logging
-logging.basicConfig(level=logging.DEBUG)
-
-parser = MusicXMLParser(log_level=logging.DEBUG)
-```
-
-## Roadmap
-
-### Wersja 0.2.0
-- [ ] Obsługa ozdobników i artikulacji
-- [ ] Parser dla MusicXML 3.1
-- [ ] Optymalizacje wydajności
-- [ ] Plugin system dla rozszerzeń
-
-### Wersja 0.3.0
-- [ ] Eksport do różnych formatów
-- [ ] GUI dla analizy plików
-- [ ] Integracja z DAW
-- [ ] Cloud processing API
-
-## Licencja
-
-MIT License - szczegóły w pliku LICENSE
-
-## Autorzy
-
-Projekt inspirowany architekturą MuseScore, implementowany z myślą o profesjonalnych zastosowaniach w analizie i przetwarzaniu muzyki.
-
----
-
-*Dla szczegółów technicznych i API, zobacz dokumentację w kodzie źródłowym.* 
