@@ -269,6 +269,13 @@ class RepeatExpander:
             for measure_idx in structure['measures']:
                 if measure_idx < len(original_measures):
                     measure = deepcopy(original_measures[measure_idx])
+                    # Add repeat metadata - no repetition
+                    measure._repeat_metadata = {
+                        'is_repeat': False,
+                        'repeat_id': None,
+                        'iteration': 0,
+                        'total_iterations': 1
+                    }
                     expanded_measures.append(measure)
             self._update_measure_times(expanded_measures, start_time)
             self.logger.debug(f"Expanded simple structure to {len(expanded_measures)} measures")
@@ -279,6 +286,9 @@ class RepeatExpander:
         repeat_count = structure['repeat_count']
         base_measures = structure['measures']
         voltas = structure['voltas']
+        
+        # Generate unique repeat ID based on structure
+        repeat_id = f"repeat_{structure['start_measure']}_{len(base_measures)}"
         
         self.logger.debug(f"Base measures: {base_measures}")
         self.logger.debug(f"Voltas: {voltas}")
@@ -314,12 +324,22 @@ class RepeatExpander:
         
         # Generate repeated sections
         for repeat_num in range(1, repeat_count + 1):
-            self.logger.debug(f"Generating repeat iteration {repeat_num}")
+            # Iteration numbering: 0-based for each repeat (0, 1, 2...)
+            iteration_number = repeat_num - 1
+            self.logger.debug(f"Generating repeat iteration {iteration_number} (repeat_num {repeat_num})")
             
             # Add pre-volta measures (always included)
             for measure_idx in pre_volta_measures:
                 if measure_idx < len(original_measures):
                     measure = deepcopy(original_measures[measure_idx])
+                    # Add repeat metadata
+                    measure._repeat_metadata = {
+                        'is_repeat': True,
+                        'repeat_id': repeat_id,
+                        'iteration': iteration_number,
+                        'total_iterations': repeat_count,
+                        'section': 'main'
+                    }
                     expanded_measures.append(measure)
             
             # Add appropriate volta measures for this iteration
@@ -333,6 +353,14 @@ class RepeatExpander:
                         for measure_idx in range(start_measure, end_measure + 1):
                             if measure_idx < len(original_measures):
                                 measure = deepcopy(original_measures[measure_idx])
+                                # Add repeat metadata for volta
+                                measure._repeat_metadata = {
+                                    'is_repeat': True,
+                                    'repeat_id': repeat_id,
+                                    'iteration': iteration_number,
+                                    'total_iterations': repeat_count,
+                                    'section': f'volta_{volta_to_play}'
+                                }
                                 expanded_measures.append(measure)
                                 # self.logger.debug(f"Added volta {volta_to_play} measure {measure_idx}")
             
@@ -340,6 +368,14 @@ class RepeatExpander:
             for measure_idx in post_volta_measures:
                 if measure_idx < len(original_measures):
                     measure = deepcopy(original_measures[measure_idx])
+                    # Add repeat metadata
+                    measure._repeat_metadata = {
+                        'is_repeat': True,
+                        'repeat_id': repeat_id,
+                        'iteration': iteration_number,
+                        'total_iterations': repeat_count,
+                        'section': 'main'
+                    }
                     expanded_measures.append(measure)
                     # self.logger.debug(f"Added post-volta measure {measure_idx}")
         
@@ -389,6 +425,15 @@ class RepeatExpander:
             voice_times = {}
             voice_last_non_chord_time = {}  # Track the start time of the last non-chord note per voice
             
+            # Get repeat metadata from measure
+            repeat_metadata = getattr(measure, '_repeat_metadata', {
+                'is_repeat': False,
+                'repeat_id': None,
+                'iteration': 0,
+                'total_iterations': 1,
+                'section': 'main'
+            })
+            
             for note in measure.notes:
                 # Track time per voice to handle multiple voices
                 voice_key = (note.staff, note.voice)
@@ -405,6 +450,9 @@ class RepeatExpander:
                     note.start_time = voice_times[voice_key]
                     voice_times[voice_key] += note.duration
                     voice_last_non_chord_time[voice_key] = note.start_time
+                
+                # Add repeat metadata to note
+                note._repeat_metadata = repeat_metadata.copy()
             
             # Move to next measure - use the longest voice duration
             if voice_times:
@@ -422,6 +470,15 @@ class RepeatExpander:
             voice_times = {}
             voice_last_non_chord_time = {}  # Track the start time of the last non-chord note per voice
             
+            # Default repeat metadata for non-repeat measures
+            repeat_metadata = {
+                'is_repeat': False,
+                'repeat_id': None,
+                'iteration': 0,
+                'total_iterations': 1,
+                'section': 'main'
+            }
+            
             for note in measure.notes:
                 # Track time per voice to handle multiple voices
                 voice_key = (note.staff, note.voice)
@@ -438,6 +495,9 @@ class RepeatExpander:
                     note.start_time = voice_times[voice_key]
                     voice_times[voice_key] += note.duration
                     voice_last_non_chord_time[voice_key] = note.start_time
+                
+                # Add repeat metadata to note
+                note._repeat_metadata = repeat_metadata.copy()
             
             # Move to next measure - use the longest voice duration
             if voice_times:
@@ -512,6 +572,15 @@ class LinearSequenceGenerator:
             duration_ms = quarter_notes_to_ms(note.duration, applicable_tempo)
             end_ms = start_ms + duration_ms
             
+            # Get repeat metadata from note
+            repeat_metadata = getattr(note, '_repeat_metadata', {
+                'is_repeat': False,
+                'repeat_id': None,
+                'iteration': 0,
+                'total_iterations': 1,
+                'section': 'main'
+            })
+            
             note_info = {
                 'pitch': note.pitch,
                 'is_rest': note.is_rest,
@@ -526,12 +595,83 @@ class LinearSequenceGenerator:
                 'tempo_bpm': applicable_tempo,
                 'tie_start': note.tie_start,
                 'tie_stop': note.tie_stop,
-                'is_chord': note.is_chord
+                'is_chord': note.is_chord,
+                # Add repeat information
+                'is_repeat': repeat_metadata.get('is_repeat', False),
+                'repeat_id': repeat_metadata.get('repeat_id', None),
+                'iteration': repeat_metadata.get('iteration', 0),
+                'total_iterations': repeat_metadata.get('total_iterations', 1),
+                'repeat_section': repeat_metadata.get('section', 'main')
             }
             
             notes_with_ms.append(note_info)
         
+        # Calculate display times (original working method)
+        self._calculate_display_times(notes_with_ms)
+        
         return notes_with_ms
+    
+    def _calculate_display_times_from_repeat_metadata(self, notes_with_ms: List[Dict]):
+        """Calculate display times based on real repeat metadata from RepeatExpander"""
+        print(f"DEBUG: _calculate_display_times_from_repeat_metadata called with {len(notes_with_ms)} notes")
+        
+        if not notes_with_ms:
+            print("DEBUG: No notes, returning early")
+            return
+        
+        # Build a map of base display positions for each measure
+        # Strategy: use the first occurrence of each measure to establish its display position
+        measure_display_positions = {}
+        current_display_time = 0.0
+        
+        # Process notes in order and build display timeline
+        processed_measures = set()
+        
+        for note in notes_with_ms:
+            measure_num = note['measure']
+            
+            # If this is the first time we see this measure, establish its display position
+            if measure_num not in processed_measures:
+                measure_display_positions[measure_num] = current_display_time
+                print(f"DEBUG: Measure {measure_num} display position set to {current_display_time}")
+                processed_measures.add(measure_num)
+                
+                # Find all notes in this measure to calculate its duration
+                measure_notes = [n for n in notes_with_ms if n['measure'] == measure_num]
+                if measure_notes:
+                    # Calculate measure duration from its notes
+                    measure_start = min(n['start_time_ms'] for n in measure_notes)
+                    measure_end = max(n['start_time_ms'] + n['duration_ms'] for n in measure_notes)
+                    measure_duration = measure_end - measure_start
+                    current_display_time += measure_duration
+                    print(f"DEBUG: Measure {measure_num} duration: {measure_duration}ms")
+        
+        print(f"DEBUG: Final measure display positions: {measure_display_positions}")
+        
+        # Now assign display times to all notes based on their measure's display position
+        for note in notes_with_ms:
+            measure_num = note['measure']
+            measure_display_start = measure_display_positions.get(measure_num, 0.0)
+            
+            # Find the start time of this measure in the original timeline
+            # (we need this to calculate the note's offset within the measure)
+            measure_notes = [n for n in notes_with_ms if n['measure'] == measure_num]
+            if measure_notes:
+                measure_original_start = min(n['start_time_ms'] for n in measure_notes)
+                note_offset_in_measure = note['start_time_ms'] - measure_original_start
+            else:
+                note_offset_in_measure = 0.0
+            
+            # Calculate final display time
+            note['start_time_display_ms'] = measure_display_start + note_offset_in_measure
+            
+            # Keep the iteration info from repeat metadata
+            # note['iteration'] is already set from repeat metadata
+            
+            print(f"DEBUG: Note in measure {measure_num} (iteration {note['iteration']}): "
+                  f"start_ms={note['start_time_ms']:.1f}, display_ms={note['start_time_display_ms']:.1f}")
+        
+        print(f"DEBUG: Finished calculating display times for {len(notes_with_ms)} notes")
     
     def _calculate_display_times(self, notes_with_ms: List[Dict]):
         """Calculate display times for frontend visualization (resets for repeats)"""
@@ -556,7 +696,9 @@ class LinearSequenceGenerator:
             print("DEBUG: No repeat iterations detected, setting display_ms = start_ms for all notes")
             for i, note in enumerate(notes_with_ms):
                 note['start_time_display_ms'] = note['start_time_ms']
-                note['iteration'] = 0  # Single iteration
+                # Don't overwrite iteration if it already exists from repeat metadata
+                if 'iteration' not in note:
+                    note['iteration'] = 0  # Single iteration
                 # print(f"DEBUG: Note {i}: added start_time_display_ms = {note['start_time_display_ms']}")
             self.logger.debug("No repeat iterations - using start_time_ms as display_ms")
             print("DEBUG: Finished setting display times for all notes")
@@ -655,7 +797,9 @@ class LinearSequenceGenerator:
                 
                 # Set display time and iteration info
                 note['start_time_display_ms'] = measure_start_display + note_offset_in_measure
-                note['iteration'] = iteration_idx
+                # Don't overwrite iteration if it already exists from repeat metadata
+                if 'iteration' not in note:
+                    note['iteration'] = iteration_idx
             
             self.logger.debug(f"Iteration {iteration_idx}: {len(iteration_notes)} notes, "
                             f"measures={sorted(set(n['measure'] for n in iteration_notes))}")
@@ -847,25 +991,11 @@ class LinearSequenceGenerator:
         original_notes = self.get_notes_with_milliseconds(score)
         print(f"DEBUG: Got {len(original_notes)} original notes")
         
-        # DEBUG: Print original notes timing
-        print("DEBUG: Original notes timing by measure:")
-        original_by_measure = {}
-        for note in original_notes:
-            measure = note['measure']
-            if measure not in original_by_measure:
-                original_by_measure[measure] = []
-            original_by_measure[measure].append(note)
-        
-        for measure in sorted(original_by_measure.keys()):
-            measure_notes = original_by_measure[measure]
-            start_times = [n['start_time_ms'] for n in measure_notes]
-            print(f"  Measure {measure}: {len(measure_notes)} notes, times: {min(start_times):.1f} - {max(start_times):.1f}ms")
-        
-        # Get notes from expanded score (with repeats) - this gives us correct start_ms for playback
+        # Get notes from expanded score (with repeats) - this gives us correct start_ms for playback + repeat metadata
         expanded_notes = self.get_notes_with_milliseconds(expanded_score)
         print(f"DEBUG: Got {len(expanded_notes)} expanded notes")
         
-        # Join them - copy display_ms from original to expanded
+        # Join them - copy display_ms from original to expanded, keep repeat metadata from expanded
         notes_with_display = self.join_display_with_expanded(expanded_notes, original_notes)
         print(f"DEBUG: Joined into {len(notes_with_display)} notes with display_ms")
         
@@ -929,10 +1059,11 @@ class LinearSequenceGenerator:
                     print(f"DEBUG: FALLBACK for iteration {iteration_idx}, note {i} (measure {measure}): "
                           f"measure not found in original, using start_time_ms = {display_ms}")
                 
-                # Create result note with display_ms
+                # Create result note with display_ms and keep repeat metadata from expanded note
                 note_with_display = expanded_note.copy()
                 note_with_display['start_time_display_ms'] = display_ms
-                note_with_display['iteration'] = iteration_idx
+                # Keep the original iteration from repeat metadata, but also add old iteration for compatibility
+                note_with_display['old_iteration'] = iteration_idx  # Old system for reference
                 result.append(note_with_display)
         
         print(f"DEBUG: Successfully joined {len(result)} notes with display_ms")
