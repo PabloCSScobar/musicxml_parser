@@ -261,6 +261,73 @@ class MusicXMLParserPass2:
         self.current_key_sig = 0
         self.current_time = Fraction(0)
     
+    def _get_key_signature_alterations(self, fifths: int) -> Dict[str, int]:
+        """Get default alterations for a key signature based on the circle of fifths
+        
+        Args:
+            fifths: Number of sharps (positive) or flats (negative) in key signature
+            
+        Returns:
+            Dictionary mapping note names to alteration values (-1 for flat, +1 for sharp)
+        """
+        alterations = {}
+        
+        if fifths > 0:  # Sharps
+            # Order of sharps: F, C, G, D, A, E, B
+            sharp_order = ['F', 'C', 'G', 'D', 'A', 'E', 'B']
+            for i in range(min(fifths, 7)):
+                alterations[sharp_order[i]] = 1
+                
+        elif fifths < 0:  # Flats
+            # Order of flats: B, E, A, D, G, C, F
+            flat_order = ['B', 'E', 'A', 'D', 'G', 'C', 'F']
+            for i in range(min(-fifths, 7)):
+                alterations[flat_order[i]] = -1
+                
+        return alterations
+    
+    def _normalize_enharmonic(self, pitch_str: str) -> str:
+        """Normalize enharmonic equivalents to standard forms
+        
+        Args:
+            pitch_str: Pitch string like "E#4", "Cb5", etc.
+            
+        Returns:
+            Normalized pitch string (E#4 -> F4, Cb4 -> B3, etc.)
+        """
+        if len(pitch_str) < 2:
+            return pitch_str
+            
+        # Extract components
+        if pitch_str[-1].isdigit():
+            note_part = pitch_str[:-1]  # Everything except octave
+            octave = int(pitch_str[-1])
+        else:
+            return pitch_str  # Invalid format
+            
+        # Enharmonic mapping with octave adjustments
+        # Some enharmonic equivalents cross octave boundaries
+        enharmonic_map = {
+            # Notes that go up in pitch (no octave change)
+            'E#': ('F', 0),   'Fb': ('E', 0),
+            'C##': ('D', 0),  'Dbb': ('C', 0),
+            'D##': ('E', 0),  'Ebb': ('D', 0), 
+            'F##': ('G', 0),  'Gbb': ('F', 0),
+            'G##': ('A', 0),  'Abb': ('G', 0),
+            'A##': ('B', 0),  'Bbb': ('A', 0),
+            
+            # Notes that cross octave boundary
+            'B#': ('C', 1),   # B#4 -> C5
+            'Cb': ('B', -1),  # Cb4 -> B3
+        }
+        
+        if note_part in enharmonic_map:
+            new_note, octave_adjust = enharmonic_map[note_part]
+            new_octave = octave + octave_adjust
+            return f"{new_note}{new_octave}"
+        
+        return pitch_str
+    
     def parse(self, xml_content: str) -> MusicXMLScore:
         """Parse MusicXML content - second pass"""
         try:
@@ -555,15 +622,32 @@ class MusicXMLParserPass2:
                 alter = pitch_elem.find('alter')
                 
                 if step is not None and octave is not None:
-                    pitch_str = step.text
+                    step_text = step.text
+                    octave_text = octave.text
+                    
+                    # Get default alteration from key signature
+                    key_alterations = self._get_key_signature_alterations(self.current_key_sig)
+                    default_alteration = key_alterations.get(step_text, 0)
+                    
+                    # Use explicit alteration if present, otherwise use key signature default
                     if alter is not None:
+                        # Explicit alteration overrides key signature
                         alter_val = float(alter.text)
-                        if alter_val > 0:
-                            pitch_str += '#' * int(alter_val)
-                        elif alter_val < 0:
-                            pitch_str += 'b' * int(-alter_val)
-                    pitch_str += octave.text
-                    pitch = pitch_str
+                        final_alteration = int(alter_val)
+                    else:
+                        # Use key signature default
+                        final_alteration = default_alteration
+                    
+                    # Build pitch string
+                    pitch_str = step_text
+                    if final_alteration > 0:
+                        pitch_str += '#' * final_alteration
+                    elif final_alteration < 0:
+                        pitch_str += 'b' * (-final_alteration)
+                    pitch_str += octave_text
+                    
+                    # Normalize enharmonic equivalents to standard forms
+                    pitch = self._normalize_enharmonic(pitch_str)
         
         # Parse duration
         duration_elem = note_elem.find('duration')
